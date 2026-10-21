@@ -254,3 +254,11 @@ journalctl -t wwan-dial
 ## Limitations
 
 - IPv4 only.
+
+## License
+
+Copyright (C) 2026 iiidefix
+
+wwan-manager is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. See [LICENSE](LICENSE).
+
+If you would like to use wwan-manager under a different license, contact the author.
