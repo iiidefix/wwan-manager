@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+case "$1" in
+remove|purge)
+	# The generated stanza calls wwan-dial, which is gone now.
+	rm -f /etc/network/interfaces.d/wwan-manager /etc/udev/rules.d/90-wwan-manager-ifname.rules
+	if command -v udevadm >/dev/null; then
+		udevadm control --reload || true
+		udevadm trigger --subsystem-match=tty --action=change || true
+	fi
+	;;
+esac
+if [ "$1" = purge ]; then
+	rm -f /run/wwan-at.lock /run/wwan/*.dns
+fi
+exit 0

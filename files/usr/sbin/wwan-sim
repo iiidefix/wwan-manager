@@ -1,0 +1,140 @@
+#!/bin/bash
+# wwan-sim [--force] [1|2|2 off] — show or switch the active SIM of a Sierra
+# Wireless EM7455 / Dell DW5811e. The module has two SIM interfaces (AT!UIMS
+# 0 and 1); a dual-SIM carrier board that wires its second slot to the
+# module's UIM2 pins makes them slot 1 and slot 2.
+# Without an argument: print the active slot and the SIM and network state.
+# With 1 or 2: hang up LTE, enable UIM2 once (AT!CUSTOM="UIM2ENABLE",1 and a
+# modem reset), select the slot with AT!UIMS and wait for the SIM and network
+# registration (switching the radio on after "wwan-dial off"). With "2 off": back to slot 1 if needed, disable UIM2 again
+# (AT!CUSTOM="UIM2ENABLE",0 and a modem reset) and wait for slot 1.
+# Refuses while LTE is up (ifup'd), unless --force; LTE is then hung up and
+# not brought back, that is up to whoever brought it up.
+LTE_IFACE=wwan0
+[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+
+log() {  # to the caller and the journal
+	echo "wwan-sim: $*" >&2
+	logger -t wwan-sim -- "$*"
+}
+
+at() {  # at 'AT...' [...] — AT commands with the engineering commands unlocked
+	wwan-at 'AT!ENTERCND="A710"' "$@" | grep -vx OK
+}
+
+active_slot() {  # 1 or 2
+	local u
+	u=$(at 'AT!UIMS?' | sed -n 's/^!UIMS: *\([01]\).*/\1/p')
+	[ -n "$u" ] && echo $((u + 1))
+}
+
+uim2_enabled() {
+	at 'AT!CUSTOM?' | grep -q 'UIM2ENABLE.*0x01'
+}
+
+wait_for() {  # wait_for SECONDS COMMAND... — retry COMMAND every second
+	local n=$1 i
+	shift
+	for i in $(seq "$n"); do "$@" && return 0; sleep 1; done
+	return 1
+}
+
+at_ready() { wwan-at AT 2>/dev/null | grep -qx OK; }
+at_gone() { AT_PORT=/dev/wwan-at; [ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager; [ ! -c "$AT_PORT" ]; }
+sim_ready() { wwan-at AT+CPIN? 2>/dev/null | grep -q 'CPIN: READY'; }
+registered() { wwan-at AT+CEREG? AT+CREG? 2>/dev/null | grep -qE 'REG: [0-9],[15]'; }
+
+status() {
+	local slot
+	slot=$(active_slot) || true
+	echo "active SIM: slot ${slot:-?}, UIM2 $(uim2_enabled && echo enabled || echo disabled)"
+	# +CPIN: READY = SIM usable, SIM PIN = PIN needed, CME ERROR 10 = no SIM
+	wwan-at AT+CPIN? AT+CCID AT+CIMI AT+COPS? AT+CEREG? AT+CSQ AT+CGDCONT? | grep -vx OK
+}
+
+hang_up() {  # hang_up WHAT — refuse while LTE is up (unless --force), else hang up
+	if ifquery --state "$LTE_IFACE" >/dev/null 2>&1 && [ -z "$force" ]; then
+		log "$LTE_IFACE is up; $1 would cut the connection (use --force)"
+		exit 1
+	fi
+	ifdown --force "$LTE_IFACE" >/dev/null 2>&1
+	/usr/sbin/wwan-dial down >/dev/null 2>&1
+}
+
+set_uim2() {  # set_uim2 0|1 — set UIM2ENABLE and reset the modem
+	at "AT!CUSTOM=\"UIM2ENABLE\",$1" 'AT!RESET' >/dev/null
+	# The modem only drops off USB several seconds after AT!RESET; until then
+	# it still answers with its old state.
+	wait_for 60 at_gone || { log "modem did not reset"; exit 1; }
+	wait_for 90 at_ready || { log "modem did not come back after the reset"; exit 1; }
+}
+
+select_slot() {  # select_slot 1|2
+	if at "AT!UIMS=$(($1 - 1))" | grep -q ERROR; then
+		log "modem refused AT!UIMS=$(($1 - 1))"
+		exit 1
+	fi
+}
+
+wait_active() {  # wait_active SLOT — check the slot, wait for SIM and registration
+	[ "$(active_slot)" = "$1" ] || { log "modem still reports slot $(active_slot)"; exit 1; }
+	wait_for 30 sim_ready || { log "slot $1: SIM not ready"; status; exit 1; }
+	# After "wwan-dial off" the radio is off and the modem never registers.
+	if ! wwan-at AT+CFUN? | grep -q 'CFUN: 1'; then
+		log "radio off, switching it on"
+		wwan-at AT+CFUN=1 >/dev/null
+	fi
+	wait_for 120 registered || { log "slot $1: SIM ready but not registered after 120s"; status; exit 1; }
+	log "slot $1 active and registered"
+	status
+}
+
+switch() {
+	local want=$1 cur
+	cur=$(active_slot) || { log "modem not answering on the AT port"; exit 1; }
+	[ "$cur" = "$want" ] && { echo "wwan-sim: slot $want is already active"; return 0; }
+	hang_up switching
+	log "switching from slot $cur to slot $want"
+	if [ "$want" = 2 ] && ! uim2_enabled; then
+		log "enabling UIM2, resetting the modem"
+		set_uim2 1
+	fi
+	select_slot "$want"
+	wait_active "$want"
+}
+
+disable_uim2() {
+	local cur
+	cur=$(active_slot) || { log "modem not answering on the AT port"; exit 1; }
+	if [ "$cur" = 1 ] && ! uim2_enabled; then
+		echo "wwan-sim: UIM2 is already disabled"
+		return 0
+	fi
+	hang_up "disabling UIM2"
+	# Leave slot 2 before the reset, so the modem comes back on slot 1.
+	[ "$cur" = 2 ] && { log "switching from slot 2 to slot 1"; select_slot 1; }
+	if uim2_enabled; then
+		log "disabling UIM2, resetting the modem"
+		set_uim2 0
+		uim2_enabled && { log "modem still reports UIM2 enabled"; exit 1; }
+	fi
+	wait_active 1
+}
+
+force=
+[ "$1" = --force ] && { force=1; shift; }
+case $1 in
+'') status ;;
+1) switch 1 ;;
+2)
+	case $2 in
+	'') switch 2 ;;
+	off) disable_uim2 ;;
+	*) echo "usage: wwan-sim [--force] [1|2|2 off]" >&2; exit 2 ;;
+	esac
+	;;
+*)
+	echo "usage: wwan-sim [--force] [1|2|2 off]" >&2
+	exit 2
+	;;
+esac

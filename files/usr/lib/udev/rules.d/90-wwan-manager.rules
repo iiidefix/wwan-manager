@@ -1,0 +1,9 @@
+# wwan-manager udev rules. Runs after 60-serial.rules, which imports the
+# ID_* USB properties.
+
+# Stable name /dev/wwan-at for the AT control port, independent of ttyUSB
+# enumeration order.
+# Sierra Wireless EM7455 (1199:9071, QMI configuration): AT port on USB interface 03.
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1199", ENV{ID_MODEL_ID}=="9071", ENV{ID_USB_INTERFACE_NUM}=="03", SYMLINK+="wwan-at"
+# Dell DW5811e (413c:81b6, an EM7455 variant, QMI configuration): AT port on USB interface 03.
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="413c", ENV{ID_MODEL_ID}=="81b6", ENV{ID_USB_INTERFACE_NUM}=="03", SYMLINK+="wwan-at"

@@ -1,0 +1,89 @@
+#!/bin/bash
+# wwan-pin [off] — show the SIM PIN state of a Sierra Wireless EM7455 /
+# Dell DW5811e (the active slot, see wwan-sim), or switch the SIM's PIN lock
+# off (wwan-manager needs a SIM without PIN).
+# off asks for the PIN, or reads it from stdin when that is not a terminal,
+# so it stays out of the command line and shell history. Every wrong PIN
+# costs one of the SIM's tries and the last one locks it (PUK), so the PIN
+# must be 4-8 digits and nothing is sent with fewer than 2 tries left.
+LTE_IFACE=wwan0
+[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+
+log() {  # to the caller and the journal; never pass the PIN
+	echo "wwan-pin: $*" >&2
+	logger -t wwan-pin -- "$*"
+}
+
+at() {
+	wwan-at "$@" | grep -vx OK
+}
+
+sim_state() {  # READY, SIM PIN, SIM PUK, ...
+	at AT+CPIN? | sed -n 's/^+CPIN: *//p'
+}
+
+lock_on() {
+	at 'AT+CLCK="SC",2' | grep -q '^+CLCK: *1'
+}
+
+tries() {  # PIN1 tries left, from QMI DMS "UIM Get PIN Status" (TLV 0x11: status, verify left, unblock left)
+	local dev t
+	dev=$(ls "/sys/class/net/$LTE_IFACE/device/usbmisc/" 2>/dev/null | head -1)
+	[ -n "$dev" ] || return
+	t=$(/usr/lib/wwan-manager/qmi "/dev/$dev" dms 0x002b 2>/dev/null | sed -n 's/^tlv 0x11 \[[0-9]*\]: \([0-9a-f:]*\).*/\1/p')
+	[ -n "$t" ] && echo $((16#$(echo "$t" | cut -d: -f2)))
+}
+
+status() {
+	local state
+	state=$(sim_state)
+	[ -n "$state" ] || { log "modem not answering on the AT port"; exit 1; }
+	echo "SIM: $state, PIN lock: $(lock_on && echo on || echo off), PIN tries left: $(tries)"
+}
+
+read_pin() {
+	local pin
+	if [ -t 0 ]; then
+		read -rsp "SIM PIN: " pin
+		echo >&2
+	else
+		read -r pin
+	fi
+	[[ $pin =~ ^[0-9]{4,8}$ ]] || { log "the PIN must be 4-8 digits; nothing sent"; return 1; }
+	echo "$pin"
+}
+
+off() {
+	local state n pin
+	state=$(sim_state)
+	case $state in
+	READY) lock_on || { echo "wwan-pin: PIN lock is already off"; return 0; } ;;
+	"SIM PIN") ;;
+	"SIM PUK"*) log "SIM is blocked; it needs the PUK first"; exit 1 ;;
+	*) log "SIM not usable: ${state:-modem not answering on the AT port}"; exit 1 ;;
+	esac
+	n=$(tries)
+	[ -n "$n" ] || { log "can't read the PIN tries left; nothing sent"; exit 1; }
+	[ "$n" -ge 2 ] || { log "only $n PIN try left; nothing sent, to avoid the PUK lock"; exit 1; }
+	pin=$(read_pin) || exit 1
+	if [ "$state" = "SIM PIN" ] && at "AT+CPIN=\"$pin\"" | grep -q ERROR; then
+		log "PIN rejected, $(tries) tries left"
+		exit 1
+	fi
+	if at "AT+CLCK=\"SC\",0,\"$pin\"" | grep -q ERROR; then
+		log "switching the PIN lock off was rejected, $(tries) tries left"
+		exit 1
+	fi
+	lock_on && { log "modem still reports the PIN lock on"; exit 1; }
+	log "PIN lock switched off"
+	status
+}
+
+case $1 in
+'') status ;;
+off) off ;;
+*)
+	echo "usage: wwan-pin [off]" >&2
+	exit 2
+	;;
+esac

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Hang up the LTE session before the dialer goes away.
+set -e
+if [ "$1" = remove ]; then
+	LTE_IFACE=wwan0
+	[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+	ifdown --force "$LTE_IFACE" >/dev/null 2>&1 || true
+	/usr/sbin/wwan-dial down >/dev/null 2>&1 || true
+fi
+exit 0

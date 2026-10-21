@@ -1,0 +1,89 @@
+#!/usr/bin/python3
+# qmi [--cid N] [--keep] DEV SERVICE MSGID [TYPE:HEXVALUE ...] — send one QMI request, print the response TLVs.
+#   --keep: don't release the client id (prints "cid: N"); a WDS session lives as long as its client
+#   --cid N: use an existing client id (released afterwards unless --keep)
+#   SERVICE: ctl, dms, nas, wds, wda or a number; MSGID: e.g. 0x555f
+#   TLV value as hex bytes, e.g. 01:00 (TLV 0x01 with value 00)
+import os, select, struct, sys
+
+SERVICES = {"ctl": 0x00, "wds": 0x01, "dms": 0x02, "nas": 0x03, "wda": 0x1a}
+RESULT_ERRORS = {0x01: "malformed", 0x03: "internal", 0x05: "invalid client id", 0x10: "not provisioned",
+				 0x11: "invalid argument", 0x19: "device unsupported", 0x1a: "no effect",
+				 0x1f: "invalid operation", 0x47: "invalid QMI command", 0x52: "access denied"}
+
+
+def tlvs(blob):
+	out, i = [], 0
+	while i + 3 <= len(blob):
+		t, n = blob[i], struct.unpack_from("<H", blob, i + 1)[0]
+		out.append((t, blob[i + 3:i + 3 + n]))
+		i += 3 + n
+	return out
+
+
+def frame(service, cid, tid, msg, payload):
+	if service == 0:  # CTL: 1-byte transaction id
+		sdu = struct.pack("<BBHH", 0, tid, msg, len(payload)) + payload
+	else:
+		sdu = struct.pack("<BHHH", 0, tid, msg, len(payload)) + payload
+	return struct.pack("<BHBBB", 1, 5 + len(sdu), 0, service, cid) + sdu
+
+
+def call(fd, service, cid, tid, msg, payload=b""):
+	os.write(fd, frame(service, cid, tid, msg, payload))
+	while True:
+		r, _, _ = select.select([fd], [], [], 10)
+		if not r:
+			raise SystemExit(f"qmi: no response to 0x{msg:04x}")
+		buf = os.read(fd, 4096)
+		_, _, _, svc, rcid = struct.unpack_from("<BHBBB", buf)
+		if svc != service:
+			continue
+		if service == 0:
+			flags, rtid, rmsg, n = struct.unpack_from("<BBHH", buf, 6)
+			body = buf[12:12 + n]
+		else:
+			flags, rtid, rmsg, n = struct.unpack_from("<BHHH", buf, 6)
+			body = buf[13:13 + n]
+		response = 0x01 if service == 0 else 0x02  # CTL and services flag responses differently
+		if rmsg == msg and rtid == tid and flags & response:
+			return tlvs(body)
+
+
+args = sys.argv[1:]
+cid, keep = 0, False
+while args and args[0].startswith("--"):
+	opt = args.pop(0)
+	if opt == "--keep":
+		keep = True
+	elif opt == "--cid":
+		cid = int(args.pop(0))
+dev, service, msg = args[0], args[1], int(args[2], 0)
+service = SERVICES.get(service, None) if service in SERVICES else int(service, 0)
+payload = b""
+for arg in args[3:]:
+	t, v = arg.split(":", 1)
+	val = bytes.fromhex(v.replace(":", ""))
+	payload += struct.pack("<BH", int(t, 0), len(val)) + val
+
+fd = os.open(dev, os.O_RDWR)
+if service != 0 and not cid:
+	resp = dict(call(fd, 0, 0, 1, 0x0022, struct.pack("<BHB", 0x01, 1, service)))
+	if 0x01 not in resp:
+		raise SystemExit("qmi: could not allocate a client id")
+	cid = resp[0x01][1]
+try:
+	resp = call(fd, service, cid, 2, msg, payload)
+	for t, v in resp:
+		if t == 0x02 and len(v) == 4:
+			res, err = struct.unpack("<HH", v)
+			print(f"result: {'success' if res == 0 else 'FAILURE'} (error 0x{err:02x} {RESULT_ERRORS.get(err, '')})".rstrip())
+		else:
+			text = v.decode("ascii", "replace") if v and all(32 <= b < 127 or b == 0 for b in v) else ""
+			print(f"tlv 0x{t:02x} [{len(v)}]: {v.hex(':')}" + (f"  \"{text.strip(chr(0))}\"" if text.strip(chr(0)) else ""))
+finally:
+	if service != 0 and keep:
+		print(f"cid: {cid}")
+	elif service != 0:
+		call(fd, 0, 0, 3, 0x0023, struct.pack("<BHBB", 0x01, 2, service, cid))
+	os.close(fd)

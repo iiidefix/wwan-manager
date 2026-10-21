@@ -1,0 +1,25 @@
+#!/bin/bash
+# wwan-at 'AT...' [...] — send AT commands to the modem, print replies.
+# Serialised with flock so the dialer and other callers never talk over each other.
+AT_PORT=/dev/wwan-at
+[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+dev=${WWAN_AT_PORT:-$AT_PORT}
+# Never open a missing port: writing to it would create a regular file that
+# blocks the kernel from creating the real device node when the modem appears.
+[ -c "$dev" ] || { echo "wwan-at: $dev is not a serial device (modem not ready?)" >&2; exit 1; }
+exec 9>/run/wwan-at.lock
+flock -w 30 9 || { echo "wwan-at: port busy" >&2; exit 1; }
+stty -F "$dev" 115200 raw -echo -echoe -echok 2>/dev/null
+exec 3<>"$dev" || exit 1
+# Echo is back on after every modem power-up; switch it off quietly first.
+printf 'ATE0\r' >&3
+while IFS= read -r -t 2 line <&3; do [[ ${line%$'\r'} == OK || ${line%$'\r'} == ERROR ]] && break; done
+for c in "$@"; do
+	printf '%s\r' "$c" >&3
+	while IFS= read -r -t 5 line <&3; do
+		line=${line%$'\r'}
+		[ -n "$line" ] && [ "$line" != "$c" ] && echo "$line"
+		[[ $line == OK || $line == ERROR || $line == *"CME ERROR"* ]] && break
+	done
+done
+exec 3>&-

@@ -1,0 +1,72 @@
+#!/bin/bash
+# wwan-apn [--force] [APN [PDP-TYPE]] — show or set the APN of the LTE
+# connection: the APN of the modem's PDP context QMI_PROFILE (AT+CGDCONT),
+# which wwan-dial starts. The modem keeps it across resets and power cuts.
+# Without an argument: print the context's APN and PDP type. With an APN:
+# write it (PDP type IP, IPV6 or IPV4V6; default: the context's current
+# type, else IPV4V6) and read it back. It takes effect with the next dial.
+# Refuses while LTE is up (ifup'd), unless --force; LTE is then hung up and
+# not brought back, that is up to whoever brought it up.
+LTE_IFACE=wwan0
+QMI_PROFILE=1
+[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+
+log() {  # to the caller and the journal
+	echo "wwan-apn: $*" >&2
+	logger -t wwan-apn -- "$*"
+}
+
+context() {  # print "TYPE APN" of context QMI_PROFILE (empty if undefined)
+	local out
+	out=$(wwan-at AT+CGDCONT?) || { log "modem not answering on the AT port"; exit 1; }
+	echo "$out" | sed -n "s/^+CGDCONT: *$QMI_PROFILE,\"\([^\"]*\)\",\"\([^\"]*\)\".*/\1 \2/p"
+}
+
+show() {
+	local c
+	c=$(context) || exit 1
+	[ -n "$c" ] || { echo "context $QMI_PROFILE: not defined"; return 1; }
+	echo "context $QMI_PROFILE: APN ${c#* }, PDP type ${c%% *}"
+}
+
+set_apn() {
+	local apn=$1 type=$2 cur old
+	# APN network identifier: labels of letters, digits and hyphens,
+	# separated by dots (3GPP TS 23.003), at most 100 characters.
+	if ! [[ $apn =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$ ]] || [ ${#apn} -gt 100 ]; then
+		log "not a valid APN: $apn"
+		exit 2
+	fi
+	case $type in
+	''|IP|IPV6|IPV4V6) ;;
+	*) log "PDP type must be IP, IPV6 or IPV4V6"; exit 2 ;;
+	esac
+	cur=$(context) || exit 1
+	old=${cur#* }
+	[ -n "$type" ] || type=${cur%% *}
+	[ -n "$type" ] || type=IPV4V6
+	[ "$cur" = "$type $apn" ] && { echo "wwan-apn: context $QMI_PROFILE already has APN $apn ($type)"; return 0; }
+	if ifquery --state "$LTE_IFACE" >/dev/null 2>&1; then
+		[ -n "$force" ] || { log "$LTE_IFACE is up; changing the APN would cut the connection (use --force)"; exit 1; }
+		ifdown --force "$LTE_IFACE" >/dev/null 2>&1
+		/usr/sbin/wwan-dial down >/dev/null 2>&1
+	fi
+	if wwan-at "AT+CGDCONT=$QMI_PROFILE,\"$type\",\"$apn\"" | grep -q ERROR; then
+		log "modem refused APN $apn ($type) for context $QMI_PROFILE"
+		exit 1
+	fi
+	[ "$(context)" = "$type $apn" ] || { log "modem still reports: $(show)"; exit 1; }
+	log "context $QMI_PROFILE: APN ${old:-(none)} -> $apn ($type)"
+	show
+}
+
+force=
+[ "$1" = --force ] && { force=1; shift; }
+case $# in
+0) show ;;
+1|2) set_apn "$1" "$2" ;;
+*)
+	echo "usage: wwan-apn [--force] [APN [IP|IPV6|IPV4V6]]" >&2
+	exit 2
+	;;
+esac

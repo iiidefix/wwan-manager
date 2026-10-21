@@ -1,0 +1,255 @@
+#!/bin/bash
+# wwan-dial up|down|off|on — bring the LTE connection of a Sierra Wireless EM7455 /
+# Dell DW5811e up or down (run by ifupdown as up/down of the LTE interface).
+# off: down, then low-power mode (radio off, off the network) until the next up
+# or on; with LOW_POWER=yes, down does the same. on: radio on, without dialing.
+#
+# The modem must be in the QMI USB configuration (AT!USBCOMP=1,1,0000010D:
+# diag, nmea, modem, rmnet0). The firmware only does raw IP, so there is no
+# DHCP: address, gateway, MTU and DNS come from the modem. The data session
+# is a QMI WDS session (/usr/lib/wwan-manager/qmi); its client id and handle are
+# kept in /run/wwan/<iface>.qmi until hang-up, since the session ends when
+# its client id is released.
+#
+# Laptop modules keep the radio off until the host sends the "FCC
+# authentication" (BIOS vote in AT!PCINFO?). It is lost on every modem
+# restart, so it is sent before each dial.
+LTE_IFACE=wwan0
+METRIC=700
+TABLE=700         # routing table of the LTE routes; empty = main table
+RULE_PREF=1000    # priority of the rules that send LTE traffic to TABLE
+FWMARK=700        # packets with this mark (SO_MARK, mtr --mark) use TABLE; empty = no rule
+DNS=              # LTE nameservers; empty = the ones from the modem
+AT_PORT=/dev/wwan-at
+QMI_PROFILE=1     # 3GPP profile (PDP context) with the APN, see AT+CGDCONT?
+LOW_POWER=no      # yes = down (ifdown) also switches the radio off, as off does
+[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+iface=${IFACE:-$LTE_IFACE}
+qmi_state=/run/wwan/$iface.qmi
+
+log() {  # to the caller (ifup output) and the journal
+	echo "wwan-dial: $*" >&2
+	logger -t wwan-dial -- "$*"
+}
+
+qmi() {
+	/usr/lib/wwan-manager/qmi "$@"
+}
+
+qmi_dev() {  # control device of the interface, e.g. /dev/cdc-wdm0
+	local d
+	d=$(ls "/sys/class/net/$iface/device/usbmisc/" 2>/dev/null | head -1)
+	[ -n "$d" ] && echo "/dev/$d"
+}
+
+tlv() {  # tlv TYPE — hex bytes of TLV TYPE in qmi output on stdin (without the ASCII rendering)
+	sed -n "s/^tlv $1 \[[0-9]*\]: \([0-9a-f:]*\).*/\1/p"
+}
+
+ipv4() {  # ipv4 TLV-HEX — little-endian uint32 from qmi output to dotted quad
+	python3 -c 'import sys; b = bytes.fromhex(sys.argv[1].replace(":", "")); print(".".join(str(x) for x in reversed(b)))' "$1"
+}
+
+modem_ready() {  # wait for the QMI and AT ports, set raw IP, unlock the radio
+	local i dev
+	for i in $(seq 30); do
+		dev=$(qmi_dev)
+		[ -n "$dev" ] && [ -c "$dev" ] && [ -c "$AT_PORT" ] && break
+		sleep 1
+	done
+	[ -n "$dev" ] && [ -c "$dev" ] || { echo "no QMI control device for $iface"; return 1; }
+	qmi "$dev" wda 0x0020 0x11:02000000 >/dev/null   # raw IP on the modem side too
+	if [ "$(cat "/sys/class/net/$iface/qmi/raw_ip")" != Y ]; then
+		ip link set "$iface" down
+		echo Y > "/sys/class/net/$iface/qmi/raw_ip"
+		ip link set "$iface" up
+	fi
+	qmi "$dev" dms 0x555f >/dev/null              # FCC authentication
+	qmi "$dev" dms 0x002e 0x01:00 | grep -q success || { echo "modem refuses online mode, see AT!PCINFO?"; return 1; }
+}
+
+modem_registered() {  # LTE or 2G/3G, home (1) or roaming (5)
+	wwan-at AT+CEREG? AT+CREG? 2>/dev/null | grep -qE 'REG: [0-9],[15]'
+}
+
+modem_connected() {  # WDS packet service status 2 = connected
+	local cid handle
+	[ -r "$qmi_state" ] || return 1
+	read -r cid handle < "$qmi_state"
+	qmi --keep --cid "$cid" "$(qmi_dev)" wds 0x0022 2>/dev/null | grep -q '^tlv 0x01 \[1\]: 02'
+}
+
+modem_dial() {
+	local out cid handle
+	[ -r "$qmi_state" ] && modem_hangup
+	out=$(qmi --keep "$(qmi_dev)" wds 0x0020 "0x31:$(printf %02x "$QMI_PROFILE")")
+	echo "$out"
+	cid=$(echo "$out" | sed -n 's/^cid: //p')
+	handle=$(echo "$out" | tlv 0x01 | tr -d :)
+	if echo "$out" | grep -q '^result: success' && [ -n "$handle" ]; then
+		mkdir -p /run/wwan
+		echo "$cid $handle" > "$qmi_state"
+	elif [ -n "$cid" ]; then
+		qmi --cid "$cid" "$(qmi_dev)" wds 0x0022 >/dev/null 2>&1  # any call without --keep releases the client id
+	fi
+}
+
+modem_hangup() {
+	local cid handle dev
+	[ -r "$qmi_state" ] || return 0
+	read -r cid handle < "$qmi_state"
+	rm -f "$qmi_state"
+	dev=$(qmi_dev)
+	[ -n "$dev" ] || return 0   # modem gone: so is the session
+	qmi --cid "$cid" "$dev" wds 0x0021 "0x01:$handle"
+}
+
+modem_low_power() {  # operating mode low power; modem_ready sets it online again
+	local dev
+	dev=$(qmi_dev)
+	[ -n "$dev" ] || { echo "no modem connected"; return 1; }
+	qmi "$dev" dms 0x002e 0x01:01 | grep -q success || { echo "modem refuses low-power mode"; return 1; }
+}
+
+modem_address() {  # print: ADDRESS/PREFIX GATEWAY MTU DNS...
+	local cid handle set addr mask gw mtu dns
+	read -r cid handle < "$qmi_state" || return 1
+	# requested settings: DNS (0x10), IP address (0x100), gateway (0x200), MTU (0x2000)
+	set=$(qmi --keep --cid "$cid" "$(qmi_dev)" wds 0x002d 0x10:10230000)
+	addr=$(echo "$set" | tlv 0x1e)
+	mask=$(echo "$set" | tlv 0x21)
+	gw=$(echo "$set" | tlv 0x20)
+	mtu=$(echo "$set" | tlv 0x29)
+	[ -n "$addr" ] && [ -n "$mask" ] || return 1
+	dns="$(ipv4 "$(echo "$set" | tlv 0x15)" 2>/dev/null) $(ipv4 "$(echo "$set" | tlv 0x16)" 2>/dev/null)"
+	echo "$(ipv4 "$addr")/$(python3 -c 'import ipaddress, sys; print(ipaddress.IPv4Network("0.0.0.0/" + sys.argv[1]).prefixlen)' "$(ipv4 "$mask")")" \
+			 "$(ipv4 "$gw")" "$(python3 -c 'import sys; print(int.from_bytes(bytes.fromhex(sys.argv[1].replace(":", "")), "little"))' "${mtu:-dc:05:00:00}")" $dns
+}
+
+modem_status() {
+	# !PCINFO LPM voters: BIOS = FCC lock, IMSWITCH = firmware preference mismatch (AT!IMPREF?).
+	wwan-at AT+CPIN? AT+CSQ AT+COPS? AT+CEREG? 'AT!PCINFO?' 'AT!GSTATUS?' AT+CGDCONT? AT+CEER
+}
+
+table_up() {  # move the gateway routes from main to TABLE, copy the subnet routes; add the rules
+	local r a
+	[ -n "$TABLE" ] || return 0
+	# Subnet routes first (sorted before "default"): they make the gateway
+	# reachable in TABLE. They also stay in main, so routes added there via
+	# the LTE gateway (e.g. a host route to a VPN server) still work.
+	ip -4 route show table main dev "$iface" | sed 's/ linkdown//' | sort | while read -r r; do
+		ip route replace $r dev "$iface" table "$TABLE"
+		case " $r " in *" scope link "*) ;; *) ip route del $r dev "$iface" table main ;; esac
+	done
+	table_rules_del
+	# Traffic bound to the interface (curl --interface, ping -I) or sent from
+	# its address uses TABLE.
+	ip rule add oif "$iface" lookup "$TABLE" pref "$RULE_PREF"
+	for a in $(ip -4 -o addr show dev "$iface" scope global | awk '{sub("/.*", "", $4); print $4}'); do
+		ip rule add from "$a" lookup "$TABLE" pref "$RULE_PREF"
+	done
+	# Marked traffic too: mtr's ICMP/UDP probes ignore -I and route by the
+	# main table, but --mark reaches them.
+	[ -z "$FWMARK" ] || ip rule add fwmark "$FWMARK" lookup "$TABLE" pref "$RULE_PREF"
+}
+
+table_rules_del() {
+	while ip rule del lookup "$TABLE" pref "$RULE_PREF" 2>/dev/null; do :; done
+}
+
+table_down() {
+	[ -n "$TABLE" ] || return 0
+	table_rules_del
+	ip route flush table "$TABLE" dev "$iface" 2>/dev/null
+}
+
+address_up() {
+	local addr gw mtu dns
+	read -r addr gw mtu dns <<< "$(modem_address)"
+	[ -n "$addr" ] || return 1
+	ip link set "$iface" mtu "$mtu" 2>/dev/null
+	ip addr replace "$addr" dev "$iface" || return 1
+	ip route replace default via "$gw" dev "$iface" metric "$METRIC" || return 1
+	mkdir -p /run/wwan
+	echo "${DNS:-$dns}" > "/run/wwan/$iface.dns"
+	table_up
+}
+
+address_down() {
+	ip addr flush dev "$iface" scope global 2>/dev/null
+	table_down
+	rm -f "/run/wwan/$iface.dns"
+}
+
+dial() {
+	local try i
+	modem_connected && { log "$iface: data session already up"; return 0; }
+	# Right after power-up a modem enumerates before it is registered on the
+	# network; a dial sent then is silently lost.
+	for i in $(seq 60); do
+		modem_registered && break
+		[ $i = 1 ] && log "$iface: waiting for network registration"
+		sleep 2
+	done
+	modem_registered || log "$iface: still not registered after 120s, dialing anyway"
+	for try in 1 2 3; do
+		log "$iface: dialing (attempt $try)"
+		modem_dial >/dev/null
+		for i in $(seq 10); do
+			sleep 1
+			modem_connected && { log "$iface: data session up"; return 0; }
+		done
+	done
+	log "$iface: modem did not connect"
+	modem_status 2>&1 | grep -v '^OK$' | while read -r l; do log "$iface: status: $l"; done
+	return 1
+}
+
+up() {
+	local msg
+	[ -e "/sys/class/net/$iface" ] || { log "$iface: no modem connected"; exit 1; }
+	ip link set "$iface" up 2>/dev/null
+	msg=$(modem_ready) || { log "$iface: modem not ready: $msg"; exit 1; }
+	# A failed dial may leave the session request pending, so undo
+	# everything, as ifdown would.
+	dial || { down; exit 1; }
+	address_up || { log "$iface: no address after dialing"; modem_hangup >/dev/null; address_down; exit 1; }
+	log "$iface: up, $(ip -4 -br addr show "$iface" | awk '{print $3}')"
+}
+
+down() {
+	local msg
+	address_down
+	if msg=$(modem_hangup 2>&1); then
+		log "$iface: hung up"
+	else
+		log "$iface: hang-up failed: $(echo "$msg" | tail -1)"
+		return 1
+	fi
+}
+
+off() {
+	local msg
+	# Low power also ends a session the hang-up left behind.
+	down
+	msg=$(modem_low_power) || { log "$iface: $msg"; exit 1; }
+	log "$iface: low-power mode, radio off"
+}
+
+on() {
+	local msg
+	[ -e "/sys/class/net/$iface" ] || { log "$iface: no modem connected"; exit 1; }
+	msg=$(modem_ready) || { log "$iface: modem not ready: $msg"; exit 1; }
+	log "$iface: online, radio on"
+}
+
+case $1 in
+up)   up ;;
+down) if [ "$LOW_POWER" = yes ]; then off; else down; fi ;;
+off)  off ;;
+on)   on ;;
+*)
+	echo "usage: wwan-dial up|down|off|on" >&2
+	exit 2
+	;;
+esac

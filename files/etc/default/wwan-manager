@@ -1,0 +1,31 @@
+# /etc/default/wwan-manager — LTE modem connection settings (Sierra Wireless
+# EM7455 / Dell DW5811e). After changing LTE_IFACE or METRIC, run:
+# wwan-manager-setup
+
+# Network interface of the modem, and the metric of its default route
+# (higher = lower priority than the primary uplink).
+LTE_IFACE=wwan0
+METRIC=700
+
+# Routing table of the LTE routes: the default route goes there instead of
+# the main table; traffic bound to LTE_IFACE or sent from its address uses
+# it. Empty = everything in the main table.
+TABLE=700
+
+# Nameservers to use over LTE (space-separated), recorded in
+# /run/wwan/<iface>.dns for whoever routes traffic over LTE. Empty = the ones
+# the modem hands out.
+DNS="1.1.1.1"
+
+# AT control port. /dev/wwan-at is a stable udev symlink to the modem's AT
+# port (USB interface 03).
+AT_PORT=/dev/wwan-at
+
+# 3GPP profile (PDP context) to start; its APN is the modem's, see
+# wwan-at AT+CGDCONT?
+QMI_PROFILE=1
+
+# yes = hang-up (ifdown wwan0, wwan-dial down) also switches the modem to
+# low-power mode: radio off, off the network, LED off; the next dial sets it
+# online again. no = the radio stays on and the modem registered.
+LOW_POWER=no

@@ -1,0 +1,6 @@
+# bash completion for wwan-dial up|down|off|on
+_wwan_dial() {
+	COMPREPLY=()
+	[ "$COMP_CWORD" = 1 ] && COMPREPLY=($(compgen -W 'up down off on' -- "${COMP_WORDS[1]}"))
+}
+complete -F _wwan_dial wwan-dial

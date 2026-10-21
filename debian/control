@@ -1,0 +1,24 @@
+Package: wwan-manager
+Version: @VERSION@
+Architecture: all
+Maintainer: @MAINTAINER@
+Section: net
+Priority: optional
+Depends: ifupdown, iproute2, util-linux, coreutils, python3, systemd, udev
+Description: on-demand LTE data connection for a Sierra Wireless EM7455 / Dell DW5811e
+ Brings up a Sierra Wireless EM7455 (1199:9071) or Dell DW5811e (413c:81b6,
+ or converted to 1199:9071) in QMI configuration as an ifupdown interface
+ (default wwan0), dialed on demand: "ifup wwan0" starts a QMI data session
+ (/usr/lib/wwan-manager/qmi) and sets address, gateway, MTU and DNS from the
+ modem (raw IP), "ifdown wwan0" hangs up. Nothing dials by itself. The LTE
+ routes go into their own routing table (default 700), so normal traffic
+ stays on the primary uplink. Sends the per-session FCC unlock before every
+ dial. Dial progress and failure diagnostics go to the journal (tag
+ wwan-dial). /etc/resolv.conf is never touched; the LTE nameservers (DNS
+ setting, default 1.1.1.1, or the modem's) are recorded in
+ /run/wwan/<iface>.dns.
+ .
+ wwan-sim shows or switches the active SIM on dual-SIM carrier boards,
+ wwan-pin shows the SIM PIN state or switches the SIM's PIN lock off,
+ wwan-apn shows or sets the APN (stored in the modem's PDP context).
+ Settings are in /etc/default/wwan-manager.

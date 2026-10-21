@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+	# Generate the stanza and the interface-name rule, rename a modem
+	# interface that is already present.
+	wwan-manager-setup
+	if command -v udevadm >/dev/null; then
+		# Create /dev/wwan-at for a modem that is already plugged in.
+		udevadm trigger --subsystem-match=tty --action=change || true
+	fi
+fi
+exit 0

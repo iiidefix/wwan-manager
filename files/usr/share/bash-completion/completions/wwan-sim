@@ -1,0 +1,11 @@
+# bash completion for wwan-sim [--force] [1|2|2 off]
+_wwan_sim() {
+	local cur=${COMP_WORDS[COMP_CWORD]} i=1
+	COMPREPLY=()
+	[ "${COMP_WORDS[1]}" = --force ] && [ "$COMP_CWORD" -gt 1 ] && i=2
+	case $((COMP_CWORD - i)) in
+	0) COMPREPLY=($(compgen -W "1 2 $([ $i = 1 ] && echo --force)" -- "$cur")) ;;
+	1) [ "${COMP_WORDS[i]}" = 2 ] && COMPREPLY=($(compgen -W off -- "$cur")) ;;
+	esac
+}
+complete -F _wwan_sim wwan-sim
