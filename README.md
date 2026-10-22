@@ -178,6 +178,26 @@ different contexts: write one with `wwan-apn --profile N` and dial it with
 `wwan-dial up --profile N` run by hand does not go through `ifup`, so
 `ifdown` does not know about it; hang up with `wwan-dial down`.
 
+## IPv6
+
+Optional, off by default. With `IPV6=yes` in `/etc/default/wwan-manager`,
+`wwan-dial up` starts a second QMI WDS session for IPv6 after the IPv4 one
+(the modem keeps one address family per session; the client's IP family
+preference is set with WDS `0x004D`). The profile's PDP type must be
+`IPV4V6` or `IPV6` (`wwan-apn`, default `IPV4V6`).
+
+The address, prefix length and gateway come from the modem (WDS `0x002D`,
+TLVs `0x25` and `0x26`); no router advertisements are accepted on the
+interface (`accept_ra=0`), as they would put a default route into the main
+table. The default route goes into `TABLE` with `METRIC`, with the same rules
+as for IPv4 (traffic bound to the interface or its address, `FWMARK`); with an
+empty `TABLE` it goes into the main table. If `DNS` is empty, the modem's IPv6
+nameservers are added to `/run/wwan/<iface>.dns`. `ifdown` removes the address,
+routes and rules and ends both sessions.
+
+If the IPv6 session fails, the connection stays IPv4-only; the journal
+(`-t wwan-dial`) says so.
+
 ## SIM PIN
 
 `wwan-manager` needs a SIM without PIN. To switch the PIN lock off for the SIM
@@ -232,12 +252,13 @@ down: the rules of the old table are only removed at hang-up.
 | `AT_PORT` | `/dev/wwan-at` | AT port, used for registration, status, `wwan-sim` and `wwan-pin` |
 | `QMI_PROFILE` | `1` | 3GPP profile (PDP context) that `ifup` / `wwan-dial` start and `wwan-apn` shows and writes. Its APN is stored in the modem, see [APN](#apn). `--profile N` on either command overrides it for one call |
 | `LOW_POWER` | `no` | `yes` = hang-up also switches the radio off, as `wwan-dial off` |
+| `IPV6` | `no` | `yes` = also start an IPv6 session, see [IPv6](#ipv6) |
 
 ## Build and install
 
 ```sh
-make                    # → dist/wwan-manager_1.0.1_all.deb
-make VERSION=1.0.2      # another version
+make                    # → dist/wwan-manager_1.1.0_all.deb
+make VERSION=1.1.1      # another version
 make clean
 dpkg -i dist/wwan-manager_*.deb
 ```
@@ -260,10 +281,6 @@ ifdown wwan0; wwan-dial off               # hang up and switch the radio off (LO
 wwan-dial on                              # radio on again, without dialing
 journalctl -t wwan-dial
 ```
-
-## Limitations
-
-- IPv4 only.
 
 ## License
 

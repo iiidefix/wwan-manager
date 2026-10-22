@@ -13,6 +13,12 @@
 # kept in /run/wwan/<iface>.qmi until hang-up, since the session ends when
 # its client id is released.
 #
+# IPV6=yes adds a second WDS session for IPv6 (the modem keeps one address
+# family per session), with the profile's APN, so the profile must be
+# IPV4V6 or IPV6 (wwan-apn). Its address, default route and DNS are set as
+# for IPv4, from the modem and without router advertisements. If the IPv6
+# session fails, the connection stays IPv4-only.
+#
 # Laptop modules keep the radio off until the host sends the "FCC
 # authentication" (BIOS vote in AT!PCINFO?). It is lost on every modem
 # restart, so it is sent before each dial.
@@ -25,9 +31,11 @@ DNS=              # LTE nameservers; empty = the ones from the modem
 AT_PORT=/dev/wwan-at
 QMI_PROFILE=1     # 3GPP profile (PDP context) with the APN, see AT+CGDCONT?
 LOW_POWER=no      # yes = down (ifdown) also switches the radio off, as off does
+IPV6=no           # yes = also start an IPv6 session
 [ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
 iface=${IFACE:-$LTE_IFACE}
 qmi_state=/run/wwan/$iface.qmi
+qmi_state6=/run/wwan/$iface.qmi6
 
 log() {  # to the caller (ifup output) and the journal
 	echo "wwan-dial: $*" >&2
@@ -46,6 +54,10 @@ qmi_dev() {  # control device of the interface, e.g. /dev/cdc-wdm0
 
 tlv() {  # tlv TYPE — hex bytes of TLV TYPE in qmi output on stdin (without the ASCII rendering)
 	sed -n "s/^tlv $1 \[[0-9]*\]: \([0-9a-f:]*\).*/\1/p"
+}
+
+ipv6() {  # ipv6 TLV-HEX — first 16 bytes (network order) from qmi output to an IPv6 address
+	python3 -c 'import sys, ipaddress; print(ipaddress.IPv6Address(bytes.fromhex(sys.argv[1].replace(":", ""))[:16]))' "$1"
 }
 
 ipv4() {  # ipv4 TLV-HEX — little-endian uint32 from qmi output to dotted quad
@@ -74,33 +86,41 @@ modem_registered() {  # LTE or 2G/3G, home (1) or roaming (5)
 	wwan-at AT+CEREG? AT+CREG? 2>/dev/null | grep -qE 'REG: [0-9],[15]'
 }
 
-modem_connected() {  # WDS packet service status 2 = connected
-	local cid handle
-	[ -r "$qmi_state" ] || return 1
-	read -r cid handle < "$qmi_state"
+modem_connected() {  # modem_connected [STATE-FILE] — WDS packet service status 2 = connected
+	local cid handle state=${1:-$qmi_state}
+	[ -r "$state" ] || return 1
+	read -r cid handle < "$state"
 	qmi --keep --cid "$cid" "$(qmi_dev)" wds 0x0022 2>/dev/null | grep -q '^tlv 0x01 \[1\]: 02'
 }
 
-modem_dial() {
-	local out cid handle
-	[ -r "$qmi_state" ] && modem_hangup
-	out=$(qmi --keep "$(qmi_dev)" wds 0x0020 "0x31:$(printf %02x "$QMI_PROFILE")")
+modem_dial() {  # modem_dial [6] — start the data session, for IPv4 or IPv6
+	local out cid handle state=$qmi_state
+	if [ "$1" = 6 ]; then
+		state=$qmi_state6
+		[ -r "$state" ] && modem_hangup "$state"
+		# the client's IP family preference (WDS 0x004D) before the start
+		cid=$(qmi --keep "$(qmi_dev)" wds 0x004d 0x01:06 | sed -n 's/^cid: //p')
+		[ -n "$cid" ] || return 1
+	else
+		[ -r "$state" ] && modem_hangup
+	fi
+	out=$(qmi --keep ${cid:+--cid "$cid"} "$(qmi_dev)" wds 0x0020 "0x31:$(printf %02x "$QMI_PROFILE")")
 	echo "$out"
 	cid=$(echo "$out" | sed -n 's/^cid: //p')
 	handle=$(echo "$out" | tlv 0x01 | tr -d :)
 	if echo "$out" | grep -q '^result: success' && [ -n "$handle" ]; then
 		mkdir -p /run/wwan
-		echo "$cid $handle" > "$qmi_state"
+		echo "$cid $handle" > "$state"
 	elif [ -n "$cid" ]; then
 		qmi --cid "$cid" "$(qmi_dev)" wds 0x0022 >/dev/null 2>&1  # any call without --keep releases the client id
 	fi
 }
 
-modem_hangup() {
-	local cid handle dev
-	[ -r "$qmi_state" ] || return 0
-	read -r cid handle < "$qmi_state"
-	rm -f "$qmi_state"
+modem_hangup() {  # modem_hangup [STATE-FILE]
+	local cid handle dev state=${1:-$qmi_state}
+	[ -r "$state" ] || return 0
+	read -r cid handle < "$state"
+	rm -f "$state"
 	dev=$(qmi_dev)
 	[ -n "$dev" ] || return 0   # modem gone: so is the session
 	qmi --cid "$cid" "$dev" wds 0x0021 "0x01:$handle"
@@ -126,6 +146,19 @@ modem_address() {  # print: ADDRESS/PREFIX GATEWAY MTU DNS...
 	dns="$(ipv4 "$(echo "$set" | tlv 0x15)" 2>/dev/null) $(ipv4 "$(echo "$set" | tlv 0x16)" 2>/dev/null)"
 	echo "$(ipv4 "$addr")/$(python3 -c 'import ipaddress, sys; print(ipaddress.IPv4Network("0.0.0.0/" + sys.argv[1]).prefixlen)' "$(ipv4 "$mask")")" \
 			 "$(ipv4 "$gw")" "$(python3 -c 'import sys; print(int.from_bytes(bytes.fromhex(sys.argv[1].replace(":", "")), "little"))' "${mtu:-dc:05:00:00}")" $dns
+}
+
+modem_address6() {  # print: ADDRESS/PREFIX GATEWAY DNS...
+	local cid handle set addr gw
+	read -r cid handle < "$qmi_state6" || return 1
+	# same request as for IPv4; the IPv6 answers are TLV 0x25 address + prefix
+	# length, 0x26 gateway, 0x27 and 0x28 DNS
+	set=$(qmi --keep --cid "$cid" "$(qmi_dev)" wds 0x002d 0x10:10230000)
+	addr=$(echo "$set" | tlv 0x25)
+	gw=$(echo "$set" | tlv 0x26)
+	[ -n "$addr" ] || return 1
+	echo "$(ipv6 "$addr")/$((16#$(echo "$addr" | cut -d: -f17)))" "$(ipv6 "$gw")" \
+			 "$(ipv6 "$(echo "$set" | tlv 0x27)" 2>/dev/null)" "$(ipv6 "$(echo "$set" | tlv 0x28)" 2>/dev/null)"
 }
 
 modem_status() {
@@ -163,6 +196,8 @@ table_down() {
 	[ -n "$TABLE" ] || return 0
 	table_rules_del
 	ip route flush table "$TABLE" dev "$iface" 2>/dev/null
+	while ip -6 rule del lookup "$TABLE" pref "$RULE_PREF" 2>/dev/null; do :; done
+	ip -6 route flush table "$TABLE" dev "$iface" 2>/dev/null
 }
 
 address_up() {
@@ -177,8 +212,31 @@ address_up() {
 	table_up
 }
 
+address_up6() {  # IPv6 address from the modem; default route in TABLE (else main), rules as for IPv4
+	local addr gw dns a
+	read -r addr gw dns <<< "$(modem_address6)"
+	[ -n "$addr" ] && [ -n "$gw" ] || return 1
+	# only the modem's address and route, no router advertisements: they
+	# would put a default route into the main table
+	echo 0 > "/proc/sys/net/ipv6/conf/$iface/accept_ra"
+	ip -6 addr replace "$addr" dev "$iface" || return 1
+	if [ -n "$TABLE" ]; then
+		ip -6 route replace default via "$gw" dev "$iface" metric "$METRIC" table "$TABLE" || return 1
+		while ip -6 rule del lookup "$TABLE" pref "$RULE_PREF" 2>/dev/null; do :; done
+		ip -6 rule add oif "$iface" lookup "$TABLE" pref "$RULE_PREF"
+		for a in $(ip -6 -o addr show dev "$iface" scope global | awk '{sub("/.*", "", $4); print $4}'); do
+			ip -6 rule add from "$a" lookup "$TABLE" pref "$RULE_PREF"
+		done
+		[ -z "$FWMARK" ] || ip -6 rule add fwmark "$FWMARK" lookup "$TABLE" pref "$RULE_PREF"
+	else
+		ip -6 route replace default via "$gw" dev "$iface" metric "$METRIC" || return 1
+	fi
+	[ -n "$DNS" ] || echo "$(cat "/run/wwan/$iface.dns" 2>/dev/null) $dns" > "/run/wwan/$iface.dns"
+}
+
 address_down() {
 	ip addr flush dev "$iface" scope global 2>/dev/null
+	[ -n "$TABLE" ] || ip -6 route del default dev "$iface" 2>/dev/null
 	table_down
 	rm -f "/run/wwan/$iface.dns"
 }
@@ -207,6 +265,18 @@ dial() {
 	return 1
 }
 
+dial6() {  # IPv6 session; no error exit, IPv4 works without it
+	local i
+	log "$iface: starting the IPv6 session"
+	modem_dial 6 >/dev/null
+	for i in $(seq 10); do
+		sleep 1
+		modem_connected "$qmi_state6" && return 0
+	done
+	modem_hangup "$qmi_state6" >/dev/null
+	return 1
+}
+
 up() {
 	local msg
 	[ -e "/sys/class/net/$iface" ] || { log "$iface: no modem connected"; exit 1; }
@@ -217,11 +287,19 @@ up() {
 	dial || { down; exit 1; }
 	address_up || { log "$iface: no address after dialing"; modem_hangup >/dev/null; address_down; exit 1; }
 	log "$iface: up, $(ip -4 -br addr show "$iface" | awk '{print $3}')"
+	[ "$IPV6" = yes ] || return 0
+	if dial6 && address_up6; then
+		log "$iface: IPv6 up, $(ip -6 -br addr show "$iface" scope global | awk '{print $3}')"
+	else
+		log "$iface: no IPv6 (is the profile's PDP type IPV4V6 or IPV6?); IPv4 only"
+		modem_hangup "$qmi_state6" >/dev/null
+	fi
 }
 
 down() {
 	local msg
 	address_down
+	modem_hangup "$qmi_state6" >/dev/null 2>&1
 	if msg=$(modem_hangup 2>&1); then
 		log "$iface: hung up"
 	else

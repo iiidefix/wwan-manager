@@ -31,3 +31,8 @@ QMI_PROFILE=1
 # low-power mode: radio off, off the network, LED off; the next dial sets it
 # online again. no = the radio stays on and the modem registered.
 LOW_POWER=no
+
+# yes = also start an IPv6 session (a second one: the modem keeps one address
+# family per session). The profile's PDP type must be IPV4V6 or IPV6, see
+# wwan-apn. If the IPv6 session fails, the connection stays IPv4-only.
+IPV6=no
