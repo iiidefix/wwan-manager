@@ -36,3 +36,11 @@ LOW_POWER=no
 # family per session). The profile's PDP type must be IPV4V6 or IPV6, see
 # wwan-apn. If the IPv6 session fails, the connection stays IPv4-only.
 IPV6=no
+
+# yes = while LTE is up, all internet traffic goes over it instead of the
+# primary uplink: the routes 0.0.0.0/1 and 128.0.0.0/1 (and ::/1 and 8000::/1
+# with IPV6) via the modem, in the main table. Only destinations with a route
+# of their own (the primary uplink's subnet, static routes to internal
+# networks) still use the primary uplink; add such routes first.
+# no = LTE only serves traffic bound to it (the backup route in TABLE).
+DEFAULT_ROUTE=no

@@ -178,6 +178,21 @@ different contexts: write one with `wwan-apn --profile N` and dial it with
 `wwan-dial up --profile N` run by hand does not go through `ifup`, so
 `ifdown` does not know about it; hang up with `wwan-dial down`.
 
+## LTE as the default route
+
+By default LTE is a backup: its default route is only in `TABLE`, for traffic
+bound to the interface. With `DEFAULT_ROUTE=yes`, `wwan-dial up` also adds
+`0.0.0.0/1` and `128.0.0.0/1` via the modem to the main table (and `::/1` and
+`8000::/1` with `IPV6=yes`), with `METRIC`. Two half-default routes are more
+specific than any default route, so they win whatever metric the primary
+uplink's has (DHCP routes have 0), and `ifdown` removes them again.
+
+Only destinations that have a route of their own stay on the primary uplink:
+its subnet, and any static routes, for example to internal networks. Traffic
+that used the primary uplink's default gateway moves to LTE, including other
+internal networks reached through that gateway. Add static routes for them
+before switching the option on. DNS is not changed (`/run/wwan/<iface>.dns`).
+
 ## IPv6
 
 Optional, off by default. With `IPV6=yes` in `/etc/default/wwan-manager`,
@@ -253,12 +268,13 @@ down: the rules of the old table are only removed at hang-up.
 | `QMI_PROFILE` | `1` | 3GPP profile (PDP context) that `ifup` / `wwan-dial` start and `wwan-apn` shows and writes. Its APN is stored in the modem, see [APN](#apn). `--profile N` on either command overrides it for one call |
 | `LOW_POWER` | `no` | `yes` = hang-up also switches the radio off, as `wwan-dial off` |
 | `IPV6` | `no` | `yes` = also start an IPv6 session, see [IPv6](#ipv6) |
+| `DEFAULT_ROUTE` | `no` | `yes` = all internet traffic uses LTE while it is up, see [LTE as the default route](#lte-as-the-default-route) |
 
 ## Build and install
 
 ```sh
-make                    # → dist/wwan-manager_1.1.0_all.deb
-make VERSION=1.1.1      # another version
+make                    # → dist/wwan-manager_1.2.0_all.deb
+make VERSION=1.2.1      # another version
 make clean
 dpkg -i dist/wwan-manager_*.deb
 ```

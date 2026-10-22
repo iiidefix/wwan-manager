@@ -19,6 +19,13 @@
 # for IPv4, from the modem and without router advertisements. If the IPv6
 # session fails, the connection stays IPv4-only.
 #
+# DEFAULT_ROUTE=yes makes LTE the way to the internet while it is up: the
+# two half-default routes 0.0.0.0/1 and 128.0.0.0/1 (and ::/1, 8000::/1 with
+# IPV6) go into the main table via the modem. They beat any default route,
+# whatever its metric. Only destinations with a route of their own, like the
+# primary uplink's subnet or static routes to internal networks, stay on
+# the primary uplink; everything that relied on its default route moves.
+#
 # Laptop modules keep the radio off until the host sends the "FCC
 # authentication" (BIOS vote in AT!PCINFO?). It is lost on every modem
 # restart, so it is sent before each dial.
@@ -32,6 +39,7 @@ AT_PORT=/dev/wwan-at
 QMI_PROFILE=1     # 3GPP profile (PDP context) with the APN, see AT+CGDCONT?
 LOW_POWER=no      # yes = down (ifdown) also switches the radio off, as off does
 IPV6=no           # yes = also start an IPv6 session
+DEFAULT_ROUTE=no  # yes = send all internet traffic over LTE while it is up
 [ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
 iface=${IFACE:-$LTE_IFACE}
 qmi_state=/run/wwan/$iface.qmi
@@ -200,6 +208,14 @@ table_down() {
 	ip -6 route flush table "$TABLE" dev "$iface" 2>/dev/null
 }
 
+default_route_up() {  # default_route_up -4|-6 GATEWAY ROUTE... — routes in the main table
+	local f=$1 gw=$2 r
+	shift 2
+	for r in "$@"; do
+		ip "$f" route replace "$r" via "$gw" dev "$iface" metric "$METRIC"
+	done
+}
+
 address_up() {
 	local addr gw mtu dns
 	read -r addr gw mtu dns <<< "$(modem_address)"
@@ -210,6 +226,7 @@ address_up() {
 	mkdir -p /run/wwan
 	echo "${DNS:-$dns}" > "/run/wwan/$iface.dns"
 	table_up
+	[ "$DEFAULT_ROUTE" != yes ] || default_route_up -4 "$gw" 0.0.0.0/1 128.0.0.0/1
 }
 
 address_up6() {  # IPv6 address from the modem; default route in TABLE (else main), rules as for IPv4
@@ -231,10 +248,14 @@ address_up6() {  # IPv6 address from the modem; default route in TABLE (else mai
 	else
 		ip -6 route replace default via "$gw" dev "$iface" metric "$METRIC" || return 1
 	fi
+	[ "$DEFAULT_ROUTE" != yes ] || default_route_up -6 "$gw" ::/1 8000::/1
 	[ -n "$DNS" ] || echo "$(cat "/run/wwan/$iface.dns" 2>/dev/null) $dns" > "/run/wwan/$iface.dns"
 }
 
 address_down() {
+	local r
+	for r in 0.0.0.0/1 128.0.0.0/1; do ip -4 route del "$r" dev "$iface" 2>/dev/null; done
+	for r in ::/1 8000::/1; do ip -6 route del "$r" dev "$iface" 2>/dev/null; done
 	ip addr flush dev "$iface" scope global 2>/dev/null
 	[ -n "$TABLE" ] || ip -6 route del default dev "$iface" 2>/dev/null
 	table_down
