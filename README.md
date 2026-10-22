@@ -35,12 +35,12 @@ there is no DHCP and the address comes from the modem.
 
 | Installed file | Purpose |
 |---|---|
-| `/usr/sbin/wwan-dial up\|down\|off\|on` | Dials, hangs up, hangs up and switches the radio off, or switches it on, as above; logs to the journal |
+| `/usr/sbin/wwan-dial up [--profile N]\|down\|off\|on` | Dials (profile N instead of `QMI_PROFILE`), hangs up, hangs up and switches the radio off, or switches it on, as above; logs to the journal |
 | `/usr/lib/wwan-manager/qmi` | Minimal QMI client: one request to a QMI service via `/dev/cdc-wdmN`, response as TLVs; can keep its client id for WDS sessions |
 | `/usr/sbin/wwan-at` | Sends AT commands to `AT_PORT`, serialised with flock |
 | `/usr/sbin/wwan-sim [--force] [1\|2\|2 off]` | Shows or switches the active SIM (dual-SIM carrier boards) or disables slot 2, see [Dual SIM](#dual-sim) |
-| `/usr/sbin/wwan-pin [off]` | Shows the SIM PIN state or switches the PIN lock off, see [SIM PIN](#sim-pin) |
-| `/usr/sbin/wwan-apn [--force] [APN [TYPE]]` | Shows or sets the APN, see [APN](#apn) |
+| `/usr/sbin/wwan-pin [off\|change]` | Shows the SIM PIN state, switches the PIN lock off or changes the PIN, see [SIM PIN](#sim-pin) |
+| `/usr/sbin/wwan-apn [--force] [--profile N] [APN [TYPE]]` | Shows or sets the APN, see [APN](#apn) |
 | `/usr/sbin/wwan-manager-setup` | Generates the ifupdown stanza and the interface-name udev rule from the settings; renames an already present modem interface |
 | `/usr/share/bash-completion/completions/wwan-{dial,sim,pin,apn}` | Bash completion of the subcommands, `--force` and the PDP type (needs the `bash-completion` package) |
 | `/usr/lib/udev/rules.d/90-wwan-manager.rules` | `/dev/wwan-at` symlink to the AT port on USB interface 03 (`1199:9071`, `413c:81b6`) |
@@ -163,6 +163,8 @@ wwan-apn                    # context's APN and PDP type
 wwan-apn internet           # set the APN, keep the PDP type
 wwan-apn internet IPV4V6    # set APN and PDP type (IP, IPV6 or IPV4V6)
 wwan-apn --force internet   # also while LTE is up (hangs it up)
+wwan-apn --profile 2 internet.telekom   # another context (default QMI_PROFILE)
+wwan-dial up --profile 2    # dial that context instead of QMI_PROFILE
 ```
 
 It writes the context with `AT+CGDCONT=<QMI_PROFILE>,"<type>","<apn>"`
@@ -171,7 +173,10 @@ and reads it back; the new APN takes effect with the next dial. Like
 bring LTE back up. Only valid APN names are accepted (labels of letters,
 digits and hyphens, separated by dots, at most 100 characters). Logged
 under the tag `wwan-apn`. To keep several APNs at hand, put them into
-different contexts and switch with `QMI_PROFILE` instead.
+different contexts: write one with `wwan-apn --profile N` and dial it with
+`wwan-dial up --profile N`, or make it the default with `QMI_PROFILE`.
+`wwan-dial up --profile N` run by hand does not go through `ifup`, so
+`ifdown` does not know about it; hang up with `wwan-dial down`.
 
 ## SIM PIN
 
@@ -182,6 +187,8 @@ in the active slot (`wwan-sim`):
 wwan-pin                # SIM state, PIN lock, tries left
 wwan-pin off            # asks for the PIN
 echo 1234 | wwan-pin off
+wwan-pin change         # asks for the current PIN, then the new one twice
+printf '%s\n' 1234 5678 | wwan-pin change    # current, new
 ```
 
 It uses `AT+CPIN` and `AT+CLCK="SC"`; the tries left come from QMI DMS
@@ -191,7 +198,10 @@ Every wrong PIN costs one of the SIM's tries (usually 3) and the last one
 blocks the SIM until the PUK is entered. So `off` only accepts 4–8 digits
 and sends nothing when it can't read the tries left or fewer than 2 are
 left. A SIM waiting for its PIN is unlocked first, then the lock is
-switched off. Logged under the tag `wwan-pin` (never the PIN itself).
+switched off. `change` uses `AT+CPWD="SC"`: it sets a new PIN without
+touching the lock (off stays off, on stays on), has the same checks, and
+refuses a new PIN equal to the current one. Logged under the tag `wwan-pin`
+(never a PIN).
 
 ## Diagnostics
 
@@ -220,14 +230,14 @@ down: the rules of the old table are only removed at hang-up.
 | `FWMARK` | `700` | Not in the shipped file: packets with this mark use `TABLE`; empty = no mark rule |
 | `DNS` | `1.1.1.1` | Nameservers over LTE (space-separated); empty = the modem's |
 | `AT_PORT` | `/dev/wwan-at` | AT port, used for registration, status, `wwan-sim` and `wwan-pin` |
-| `QMI_PROFILE` | `1` | 3GPP profile (PDP context) to start. Its APN is stored in the modem, see [APN](#apn) |
+| `QMI_PROFILE` | `1` | 3GPP profile (PDP context) that `ifup` / `wwan-dial` start and `wwan-apn` shows and writes. Its APN is stored in the modem, see [APN](#apn). `--profile N` on either command overrides it for one call |
 | `LOW_POWER` | `no` | `yes` = hang-up also switches the radio off, as `wwan-dial off` |
 
 ## Build and install
 
 ```sh
-make                    # → dist/wwan-manager_1.0.0_all.deb
-make VERSION=1.0.1      # another version
+make                    # → dist/wwan-manager_1.0.1_all.deb
+make VERSION=1.0.2      # another version
 make clean
 dpkg -i dist/wwan-manager_*.deb
 ```

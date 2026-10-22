@@ -21,8 +21,10 @@ DNS="1.1.1.1"
 # port (USB interface 03).
 AT_PORT=/dev/wwan-at
 
-# 3GPP profile (PDP context) to start; its APN is the modem's, see
-# wwan-at AT+CGDCONT?
+# 3GPP profile (PDP context) that ifup/wwan-dial start and that wwan-apn
+# shows and writes; its APN is the modem's, see wwan-at AT+CGDCONT?
+# "wwan-dial up --profile N" and "wwan-apn --profile N" use profile N once
+# instead.
 QMI_PROFILE=1
 
 # yes = hang-up (ifdown wwan0, wwan-dial down) also switches the modem to

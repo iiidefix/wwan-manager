@@ -1,6 +1,6 @@
-# bash completion for wwan-pin [off]
+# bash completion for wwan-pin [off|change]
 _wwan_pin() {
 	COMPREPLY=()
-	[ "$COMP_CWORD" = 1 ] && COMPREPLY=($(compgen -W off -- "${COMP_WORDS[1]}"))
+	[ "$COMP_CWORD" = 1 ] && COMPREPLY=($(compgen -W 'off change' -- "${COMP_WORDS[1]}"))
 }
 complete -F _wwan_pin wwan-pin

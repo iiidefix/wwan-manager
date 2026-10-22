@@ -1,11 +1,18 @@
-# bash completion for wwan-apn [--force] [APN [IP|IPV6|IPV4V6]]: --force and
-# the PDP type; the APN itself is free text.
+# bash completion for wwan-apn [--force] [--profile N] [APN [IP|IPV6|IPV4V6]]:
+# the options and the PDP type; the APN itself is free text.
 _wwan_apn() {
 	local cur=${COMP_WORDS[COMP_CWORD]} i=1
 	COMPREPLY=()
-	[ "${COMP_WORDS[1]}" = --force ] && [ "$COMP_CWORD" -gt 1 ] && i=2
+	while [ "$i" -lt "$COMP_CWORD" ]; do
+		case ${COMP_WORDS[i]} in
+		--force) i=$((i + 1)) ;;
+		--profile) i=$((i + 2)) ;;
+		*) break ;;
+		esac
+	done
+	[ "$i" -le "$COMP_CWORD" ] || return   # the number after --profile
 	case $((COMP_CWORD - i)) in
-	0) [ $i = 1 ] && [[ $cur == -* ]] && COMPREPLY=($(compgen -W --force -- "$cur")) ;;
+	0) [[ $cur == -* ]] && COMPREPLY=($(compgen -W '--force --profile' -- "$cur")) ;;
 	1) COMPREPLY=($(compgen -W 'IP IPV6 IPV4V6' -- "$cur")) ;;
 	esac
 }

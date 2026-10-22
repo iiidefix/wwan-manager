@@ -1,11 +1,13 @@
 #!/bin/bash
-# wwan-pin [off] — show the SIM PIN state of a Sierra Wireless EM7455 /
-# Dell DW5811e (the active slot, see wwan-sim), or switch the SIM's PIN lock
-# off (wwan-manager needs a SIM without PIN).
-# off asks for the PIN, or reads it from stdin when that is not a terminal,
-# so it stays out of the command line and shell history. Every wrong PIN
-# costs one of the SIM's tries and the last one locks it (PUK), so the PIN
-# must be 4-8 digits and nothing is sent with fewer than 2 tries left.
+# wwan-pin [off|change] — show the SIM PIN state of a Sierra Wireless EM7455 /
+# Dell DW5811e (the active slot, see wwan-sim), switch the SIM's PIN lock
+# off (wwan-manager needs a SIM without PIN), or change the PIN.
+# off asks for the PIN, change for the current and the new PIN (the new one
+# twice); when stdin is not a terminal they are read from it, one per line,
+# so they stay out of the command line and shell history. change leaves the
+# lock as it is. Every wrong PIN costs one of the SIM's tries and the last
+# one locks it (PUK), so a PIN must be 4-8 digits and nothing is sent with
+# fewer than 2 tries left.
 LTE_IFACE=wwan0
 [ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
 
@@ -41,10 +43,10 @@ status() {
 	echo "SIM: $state, PIN lock: $(lock_on && echo on || echo off), PIN tries left: $(tries)"
 }
 
-read_pin() {
+read_pin() {  # read_pin [PROMPT]
 	local pin
 	if [ -t 0 ]; then
-		read -rsp "SIM PIN: " pin
+		read -rsp "${1:-SIM PIN}: " pin
 		echo >&2
 	else
 		read -r pin
@@ -79,11 +81,38 @@ off() {
 	status
 }
 
+change() {
+	local state n old new again
+	state=$(sim_state)
+	case $state in
+	READY|"SIM PIN") ;;
+	"SIM PUK"*) log "SIM is blocked; it needs the PUK first"; exit 1 ;;
+	*) log "SIM not usable: ${state:-modem not answering on the AT port}"; exit 1 ;;
+	esac
+	n=$(tries)
+	[ -n "$n" ] || { log "can't read the PIN tries left; nothing sent"; exit 1; }
+	[ "$n" -ge 2 ] || { log "only $n PIN try left; nothing sent, to avoid the PUK lock"; exit 1; }
+	old=$(read_pin "Current SIM PIN") || exit 1
+	new=$(read_pin "New SIM PIN") || exit 1
+	if [ -t 0 ]; then
+		again=$(read_pin "New SIM PIN again") || exit 1
+		[ "$new" = "$again" ] || { log "the new PINs differ; nothing sent"; exit 1; }
+	fi
+	[ "$new" != "$old" ] || { log "the new PIN is the current one; nothing sent"; exit 1; }
+	if at "AT+CPWD=\"SC\",\"$old\",\"$new\"" | grep -q ERROR; then
+		log "changing the PIN was rejected, $(tries) tries left"
+		exit 1
+	fi
+	log "PIN changed"
+	status
+}
+
 case $1 in
 '') status ;;
 off) off ;;
+change) change ;;
 *)
-	echo "usage: wwan-pin [off]" >&2
+	echo "usage: wwan-pin [off|change]" >&2
 	exit 2
 	;;
 esac

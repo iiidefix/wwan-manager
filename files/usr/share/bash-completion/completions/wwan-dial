@@ -1,6 +1,7 @@
-# bash completion for wwan-dial up|down|off|on
+# bash completion for wwan-dial up [--profile N]|down|off|on
 _wwan_dial() {
 	COMPREPLY=()
 	[ "$COMP_CWORD" = 1 ] && COMPREPLY=($(compgen -W 'up down off on' -- "${COMP_WORDS[1]}"))
+	[ "$COMP_CWORD" = 2 ] && [ "${COMP_WORDS[1]}" = up ] && COMPREPLY=($(compgen -W --profile -- "${COMP_WORDS[2]}"))
 }
 complete -F _wwan_dial wwan-dial

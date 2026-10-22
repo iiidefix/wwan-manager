@@ -1,8 +1,10 @@
 #!/bin/bash
-# wwan-dial up|down|off|on — bring the LTE connection of a Sierra Wireless EM7455 /
+# wwan-dial up [--profile N]|down|off|on — bring the LTE connection of a Sierra Wireless EM7455 /
 # Dell DW5811e up or down (run by ifupdown as up/down of the LTE interface).
 # off: down, then low-power mode (radio off, off the network) until the next up
 # or on; with LOW_POWER=yes, down does the same. on: radio on, without dialing.
+# up --profile N dials profile N instead of QMI_PROFILE (set its APN with
+# wwan-apn --profile N). Run by hand it bypasses ifup, and so does its state.
 #
 # The modem must be in the QMI USB configuration (AT!USBCOMP=1,1,0000010D:
 # diag, nmea, modem, rmnet0). The firmware only does raw IP, so there is no
@@ -243,13 +245,18 @@ on() {
 	log "$iface: online, radio on"
 }
 
+if [ "$1" = up ] && [ "$2" = --profile ]; then
+	[[ $3 =~ ^[0-9]+$ ]] && [ "$3" -ge 1 ] && [ "$3" -le 255 ] || { echo "wwan-dial: --profile needs a number from 1 to 255" >&2; exit 2; }
+	QMI_PROFILE=$3
+	set -- up
+fi
 case $1 in
 up)   up ;;
 down) if [ "$LOW_POWER" = yes ]; then off; else down; fi ;;
 off)  off ;;
 on)   on ;;
 *)
-	echo "usage: wwan-dial up|down|off|on" >&2
+	echo "usage: wwan-dial up [--profile N]|down|off|on" >&2
 	exit 2
 	;;
 esac

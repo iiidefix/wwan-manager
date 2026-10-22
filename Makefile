@@ -3,7 +3,7 @@
 #   make VERSION=1.1.0       build another version
 #   make clean               remove build output
 PACKAGE    := $(shell sed -n 's/^Package: //p' debian/control)
-VERSION    ?= 1.0.0
+VERSION    ?= 1.0.1
 MAINTAINER ?= iiidefix <iiidefix@git.iiidefix.net>
 DEB        := dist/$(PACKAGE)_$(VERSION)_all.deb
 ROOT       := build/root

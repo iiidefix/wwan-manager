@@ -2,9 +2,7 @@
 
 One-time setup of a new module before `wwan-manager` can use it: QMI
 configuration, optional conversion of a DW5811e to the Sierra identity,
-FCC lock and firmware update. Done by hand on the Pi on 2026-10-20 for both
-modules here (an EM7455 and a DW5811e, now both on firmware 02.39.00.00 with
-carrier configuration 002.085). Everything below uses the AT port
+FCC lock and firmware update. Everything below uses the AT port
 (`/dev/wwan-at`, here `ttyUSB2`) through `wwan-at`, or the QMI client
 `/usr/lib/wwan-manager/qmi`.
 
@@ -14,10 +12,18 @@ reset the modem stays on USB for about 12 s with its old state, then
 disappears for a few seconds. Wait for `/dev/wwan-at` to come back before
 the next command.
 
+## 0. Install wwan-manager
+
+```sh
+dpkg -i wwan-manager_*.deb
+```
+
+
 ## 1. Identify the module
 
 ```sh
 lsusb | grep -iE '1199|413c'          # 1199:9071 Sierra, 413c:81b6 Dell DW5811e
+ls -l /dev/wwan-at                    # -> ttyUSB2; missing: see step 2, "MBIM only"
 wwan-at ATI 'AT!ENTERCND="A710"' 'AT!USBCOMP?' 'AT!IMAGE?' 'AT!PRIID?' 'AT!PCINFO?' 'AT!PCFCCAUTH?'
 ```
 
@@ -27,18 +33,51 @@ wwan-at ATI 'AT!ENTERCND="A710"' 'AT!USBCOMP?' 'AT!IMAGE?' 'AT!PRIID?' 'AT!PCINF
 - `AT!PCINFO?` lists the "low power mode" votes that keep the radio off:
   `BIOS` = FCC lock, `IMSWITCH` = firmware preference mismatch.
 
-Both modules came in **MBIM** configuration. Before `wwan-manager` is installed
-there is no `/dev/wwan-at`; use the ttyUSB port of USB interface 03
-directly (`WWAN_AT_PORT=/dev/ttyUSB2 wwan-at …`, with `wwan-at` copied from
-the package).
+Modules usually come in **MBIM** configuration with serial ports (AT port
+`ttyUSB2`; without the package's udev rule use
+`WWAN_AT_PORT=/dev/ttyUSB2 wwan-at …`). Some come **MBIM only**: `lsusb -t`
+shows just `cdc_mbim` (interfaces 12 and 13) and there is no `/dev/ttyUSB*`,
+so no AT port; see "MBIM only" in step 2.
 
 ## 2. QMI configuration
 
-`wwan-manager` needs the QMI USB configuration (diag, nmea, modem, rmnet0):
+`wwan-manager` needs the QMI USB configuration (diag, nmea, modem, rmnet0).
+Current status:
+
+```sh
+lsusb -t | grep -E 'qcserial|qmi_wwan|cdc_mbim'    # qmi_wwan = QMI, cdc_mbim = MBIM
+wwan-at 'AT!ENTERCND="A710"' 'AT!USBCOMP?'         # ends in …010D = QMI, …100D = MBIM
+```
+
+If it is already QMI, skip this step. Otherwise:
 
 ```sh
 wwan-at 'AT!ENTERCND="A710"' 'AT!USBCOMP=1,1,0000010D' 'AT!RESET'
 ```
+
+Check: after the reset (wait for `/dev/wwan-at`), `lsusb -t` shows
+`qcserial` (3 ports) and `qmi_wwan`, and `AT!USBCOMP?` ends in `…010D`.
+
+**MBIM only (no AT port).** The AT port is not there to switch the
+configuration, but the module answers QMI through the MBIM port. This needs
+`qmicli` (`apt install libqmi-utils`, the only download in this guide; the
+same package also provides `qmi-firmware-update` for step 5):
+
+```sh
+qmicli -d /dev/cdc-wdm0 --device-open-mbim --dms-get-model              # EM7455B
+qmicli -d /dev/cdc-wdm0 --device-open-mbim --dms-swi-get-usb-composition
+# lists the compositions; [*] marks the active one, here "9: MBIM"
+qmicli -d /dev/cdc-wdm0 --device-open-mbim --dms-swi-set-usb-composition=6
+# 6 = DM, NMEA, AT, QMI
+qmicli -d /dev/cdc-wdm0 --device-open-mbim --dms-set-operating-mode=offline
+qmicli -d /dev/cdc-wdm0 --device-open-mbim --dms-set-operating-mode=reset
+```
+
+One option per `qmicli` call. The last call may end with "Transaction timed
+out" because the modem resets under it; that is fine. After about 25 s
+`/dev/ttyUSB0-2` and `/dev/wwan-at` exist and the module is in the QMI
+configuration (check as above). Its bitmask `AT!USBCOMP?` is then
+`0020010D` (QMI plus `ubist`), which works as is.
 
 | Module | Before | After |
 |---|---|---|
@@ -53,7 +92,14 @@ wwan-at 'AT!ENTERCND="A710"' 'AT!USBCOMP=1,1,0000010D' 'AT!RESET'
 
 Optional: `wwan-manager` also handles an unconverted DW5811e (`413c:81b6`).
 Converting gives it the generic Sierra identity and carrier configuration,
-so both modules behave the same:
+so both modules behave the same. Current status:
+
+```sh
+lsusb | grep -iE '1199|413c'     # 1199:9071 = converted, 413c:81b6 = Dell identity
+wwan-at 'AT!ENTERCND="A710"' 'AT!USBVID?' 'AT!USBPID?' 'AT!USBPRODUCT?' 'AT!PRIID?'
+```
+
+Compare with the table below. Converted already: skip this step. Otherwise:
 
 ```sh
 wwan-at 'AT!ENTERCND="A710"' 'AT!USBVID=1199' 'AT!USBPID=9071,9070' \
@@ -83,8 +129,21 @@ the conversion itself; it was updated afterwards (step 5).
 Laptop modules can keep the radio off until the host sends the "FCC
 authentication" (`BIOS:1` in `AT!PCINFO?`). `wwan-dial` sends the
 per-session unlock (QMI DMS `0x555F`) before every dial, so a module with
-the lock enabled works without this step. To disable the lock permanently
-(done on the EM7455; the DW5811e had none):
+the lock enabled works without this step.
+
+Check whether the module has the lock:
+
+```sh
+wwan-at 'AT!ENTERCND="A710"' 'AT!PCFCCAUTH?' 'AT!PCINFO?'
+```
+
+- `FCC Auth Enabled: 0` and `BIOS:0` in the "LPM voters" line: no lock,
+  nothing to do; skip the rest of this step.
+- `FCC Auth Enabled: 1`: the lock is enabled. `BIOS:1` means the radio is
+  off right now (the per-session unlock was not sent yet). Both are fine for
+  `wwan-manager`; continue only to remove the lock permanently.
+
+To disable the lock permanently (done on the EM7455; the DW5811e had none):
 
 1. Get a challenge:
    ```sh
@@ -111,7 +170,19 @@ reasons (radio certification together with the original host).
 ## 5. Firmware update
 
 02.39.00.00 is the newest generic EM7455 firmware (Sierra's approved
-packages, release 30). Use the complete package with firmware and carrier
+packages, release 30). Check what the module runs:
+
+```sh
+wwan-at ATI 'AT!ENTERCND="A710"' 'AT!IMAGE?'
+```
+
+- `Revision: SWI9X30C_02.39.00.00 …` in `ATI`, and `AT!IMAGE?` listing
+  `02.39.00.00` for the FW slot and the `PRI` line (`…_GENERIC`): up to
+  date, skip the rest of this step.
+- Anything older (e.g. `02.24.03.00`): update. This is optional;
+  `wwan-manager` dials with older firmware too (checked with 02.24.03.00).
+
+Use the complete package with firmware and carrier
 configuration, `SWI9X30C_02.39.00.00_GENERIC_002.085_000.zip` (Sierra
 account download, SHA-256 `afc394dd…d162bce`; a copy is in the project
 root, and the unpacked files are in `/root/fw/` on the Pi):
@@ -149,7 +220,13 @@ two modem restarts.
 ## 6. Radio settings
 
 Settings the two modules here share (the DW5811e was aligned with the
-EM7455 after its update):
+EM7455 after its update). Current status (compare with the table below):
+
+```sh
+wwan-at 'AT!ENTERCND="A710"' 'AT!SELRAT?' 'AT!BAND?' 'AT!PCOFFEN?' 'AT!CUSTOM?' 'AT+CGDCONT?'
+```
+
+To set them:
 
 ```sh
 wwan-at 'AT!ENTERCND="A710"' 'AT!SELRAT=06' 'AT!BAND=09' 'AT!PCOFFEN=2' \
@@ -164,7 +241,8 @@ wwan-at 'AT!ENTERCND="A710"' 'AT!SELRAT=06' 'AT!BAND=09' 'AT!PCOFFEN=2' \
 | `AT!CUSTOM` | GPSENABLE unset, FASTENUMEN `0x02`; GPSSEL, IPV6ENABLE, SIMLPM, USBSERIALENABLE, SINGLEAPNSWITCH = 1 |
 | APN, context 1 (`AT+CGDCONT=1`) | `IPV4V6`, `internet.telekom` (1&1 accepts it too) |
 
-`wwan-dial` starts context 1 (`QMI_PROFILE=1` in `/etc/default/wwan-manager`),
+`wwan-dial` starts context 1 (`QMI_PROFILE=1` in `/etc/default/wwan-manager`;
+`wwan-dial up --profile N` and `wwan-apn --profile N` use another one),
 so the APN lives in the modem, not in `wwan-manager`'s settings. On a dual-SIM
 carrier board, `wwan-sim` enables the second SIM interface when slot 2 is
 first chosen (see [README.md](README.md#dual-sim)).
@@ -175,9 +253,22 @@ After installing `wwan-manager` (`/dev/wwan-at` and the interface name `wwan0`
 come from its udev rules):
 
 ```sh
-wwan-sim                       # SIM, operator, registration
+wwan-sim                       # current status: SIM, operator, registration
+wwan-apn                       # current status: APN of context 1
+wwan-apn <apn>                 # APN of context 1, your carrier's
 ifup wwan0 && ping -c5 -I wwan0 1.1.1.1; ifdown wwan0
 ```
+
+Checks:
+
+- `wwan-at AT+CPIN? AT+COPS? AT+CEREG?` → `READY`, your operator with
+  access technology `7` (LTE), `+CEREG: 0,1` (registered). A wrong APN makes
+  the dial fail quietly: check the APN first.
+- `wwan-apn` → `context 1: APN <apn>, PDP type IPV4V6`.
+- `ifup wwan0` → `wwan-dial: wwan0: up, <address>/<prefix>`; `ip route show
+  table 700` has `default via … dev wwan0 metric 700`.
+- `ping -I wwan0` gets answers.
+- `ifdown wwan0` → `wwan-dial: wwan0: hung up`, `ip -br a show wwan0` is `DOWN`.
 
 The setup survives reboots and power cuts: identity, QMI configuration,
 disabled FCC lock and radio settings are stored in the module.
