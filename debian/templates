@@ -1,0 +1,65 @@
+Template: wwan-manager/lte_iface
+Type: string
+Default: wwan0
+Description: Network interface name of the LTE modem
+ The ifupdown interface that is dialed on demand ("ifup wwan0"). Run
+ wwan-manager-setup after changing it.
+
+Template: wwan-manager/metric
+Type: string
+Default: 700
+Description: Route metric of the LTE default route
+ A higher metric means a lower priority than the primary uplink.
+
+Template: wwan-manager/table
+Type: string
+Default: 700
+Description: Routing table for the LTE routes
+ Number of the routing table that gets the LTE routes. Leave empty to use
+ the main table.
+
+Template: wwan-manager/dns
+Type: string
+Default: 1.1.1.1
+Description: Name servers to use over LTE
+ Space-separated addresses, recorded in /run/wwan/<interface>.dns for
+ whatever routes traffic over LTE. Leave empty to use the ones the modem
+ hands out.
+
+Template: wwan-manager/at_port
+Type: string
+Default: /dev/wwan-at
+Description: AT control port of the modem
+ Normally the udev symlink /dev/wwan-at, which points to the modem's AT
+ port.
+
+Template: wwan-manager/qmi_profile
+Type: string
+Default: 1
+Description: Modem profile (PDP context) to dial
+ Number of the 3GPP profile whose APN is used. Show or change its APN
+ with wwan-apn.
+
+Template: wwan-manager/low_power
+Type: boolean
+Default: false
+Description: Switch the radio off when LTE is hung up?
+ If yes, hanging up also puts the modem into low-power mode (radio off,
+ LED off); the next dial switches it on again. If no, the modem stays
+ registered on the network.
+
+Template: wwan-manager/ipv6
+Type: boolean
+Default: false
+Description: Also start an IPv6 session?
+ If yes, a second data session gives LTE an IPv6 address, route and name
+ servers. The modem's profile must allow IPv6 (PDP type IPV4V6 or IPV6).
+
+Template: wwan-manager/default_route
+Type: boolean
+Default: false
+Description: Send all internet traffic over LTE while it is up?
+ If no, LTE is only a backup route for traffic bound to it. If yes,
+ everything without a route of its own moves to LTE while it is up,
+ including internal networks that are reached through the primary
+ uplink's gateway.

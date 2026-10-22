@@ -4,7 +4,7 @@ Architecture: all
 Maintainer: @MAINTAINER@
 Section: net
 Priority: optional
-Depends: ifupdown, iproute2, util-linux, coreutils, python3, systemd, udev
+Depends: ifupdown, iproute2, util-linux, coreutils, python3, systemd, udev, debconf (>= 0.5) | debconf-2.0
 Description: on-demand LTE data connection for a Sierra Wireless EM7455 / Dell DW5811e
  Brings up a Sierra Wireless EM7455 (1199:9071) or Dell DW5811e (413c:81b6,
  or converted to 1199:9071) in QMI configuration as an ifupdown interface

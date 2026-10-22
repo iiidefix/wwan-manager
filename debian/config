@@ -1,0 +1,34 @@
+#!/bin/sh
+# debconf: ask for the settings of wwan-manager. The values in
+# /etc/default/wwan-manager (if there already is one) are the starting point, so
+# upgrades and dpkg-reconfigure show what is set now.
+set -e
+. /usr/share/debconf/confmodule
+conf=/etc/default/wwan-manager
+[ -r "$conf" ] && . "$conf"
+
+ask() {  # ask VAR PRIORITY bool|str|req DEFAULT
+	q=wwan-manager/$(echo "$1" | tr 'A-Z' 'a-z')
+	eval "isset=\${$1+x}"
+	if [ -n "$isset" ]; then
+		eval "val=\$$1"
+		if [ "$3" = bool ]; then
+			case $val in yes) val=true ;; *) val=false ;; esac
+		fi
+		# A value that differs from the shipped default was set by hand or by an
+		# earlier answer, and wins. Otherwise a preseeded or earlier answer stands.
+		[ "$val" = "$4" ] || db_set "$q" "$val"
+	fi
+	db_input "$2" "$q" || true
+}
+
+ask LTE_IFACE low req 'wwan0'
+ask METRIC low req '700'
+ask TABLE low str '700'
+ask DNS medium str '1.1.1.1'
+ask AT_PORT low req '/dev/wwan-at'
+ask QMI_PROFILE low req '1'
+ask LOW_POWER medium bool 'false'
+ask IPV6 medium bool 'false'
+ask DEFAULT_ROUTE medium bool 'false'
+db_go || true

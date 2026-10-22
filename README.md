@@ -289,17 +289,36 @@ through `ifup`, so `ifdown` does not know about it; hang up with
 | `IPV6` | `no` | `yes` = also start an IPv6 session, see [IPv6](#ipv6) |
 | `DEFAULT_ROUTE` | `no` | `yes` = all internet traffic uses LTE while it is up, see [LTE as the default route](#lte-as-the-default-route) |
 
+## Questions at install
+
+wwan-manager asks for its settings with debconf when it is installed (the main
+ones at the default priority, the rest at low priority) and writes the
+answers into `/etc/default/wwan-manager`. Look at everything, or change the answers
+later, with:
+
+```sh
+dpkg-reconfigure -plow wwan-manager
+```
+
+An installation without a terminal uses the defaults, or preseeded answers
+(`debconf-set-selections`, question names `wwan-manager/<setting in lower case>`, for
+example `wwan-manager/ipv6`). The file stays the truth for a running system: a value
+in it that differs from the shipped default (set by hand, or by an earlier
+answer) is the starting point of the question and is not replaced by a
+preseeded or older answer. Only lines whose value changed are rewritten,
+other lines and comments stay. An empty answer for a setting that cannot be empty (interface, metric, AT port, profile) is ignored; an empty `TABLE` or `DNS` is valid. After a new `LTE_IFACE` or `METRIC` the install runs `wwan-manager-setup`.
+
 ## Build and install
 
 ```sh
-make                    # → dist/wwan-manager_1.3.0_all.deb
-make VERSION=1.3.1      # another version
+make                    # → dist/wwan-manager_1.4.0_all.deb
+make VERSION=1.4.1      # another version
 make clean
 dpkg -i dist/wwan-manager_*.deb
 ```
 
 Depends on: ifupdown, iproute2, util-linux, coreutils, python3, systemd,
-udev.
+udev, debconf.
 
 - **Install / upgrade:** generates the stanza and the interface-name rule,
   renames an already present modem interface and creates `/dev/wwan-at`

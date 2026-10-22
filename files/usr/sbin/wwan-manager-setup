@@ -7,6 +7,7 @@
 # defaults < /etc/default/wwan-manager < environment
 # MODEM_USB_IDS: EM7455; DW5811e with Dell's identity
 load_config LTE_IFACE=wwan0 METRIC=700 MODEM_USB_IDS="1199:9071 413c:81b6"
+[ -n "$LTE_IFACE" ] || { echo "wwan-manager-setup: LTE_IFACE is empty" >&2; exit 1; }
 stanza=/etc/network/interfaces.d/wwan-manager
 rule=/etc/udev/rules.d/90-wwan-manager-ifname.rules
 

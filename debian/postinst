@@ -1,6 +1,42 @@
 #!/bin/sh
 set -e
+. /usr/share/debconf/confmodule
+conf=/etc/default/wwan-manager
+
+set_conf() {  # set_conf VAR VALUE: write VAR="VALUE" into the conffile if it differs
+	cur=$(. "$conf"; eval "printf %s \"\${$1-}\"")
+	[ "$cur" = "$2" ] && return 0
+	esc=$(printf %s "$2" | sed 's/[\\"$`]/\\&/g')
+	tmp=$(mktemp)
+	N=$1 V=$esc awk 'BEGIN { n = ENVIRON["N"]; v = ENVIRON["V"]; done = 0 }
+		!done && index($0, n "=") == 1 { print n "=\"" v "\""; done = 1; next }
+		{ print }
+		END { if (!done) print n "=\"" v "\"" }' "$conf" > "$tmp"
+	cat "$tmp" > "$conf"
+	rm -f "$tmp"
+}
+
+apply() {  # apply VAR bool|str|req: the debconf answer into the conffile (req: never empty)
+	db_get wwan-manager/$(echo "$1" | tr 'A-Z' 'a-z')
+	val=$RET
+	if [ "$2" = bool ]; then
+		case $val in true) val=yes ;; *) val=no ;; esac
+	fi
+	[ "$2" = req ] && [ -z "$val" ] && return 0
+	set_conf "$1" "$val"
+}
+
 if [ "$1" = configure ]; then
+	apply LTE_IFACE req
+	apply METRIC req
+	apply TABLE str
+	apply DNS str
+	apply AT_PORT req
+	apply QMI_PROFILE req
+	apply LOW_POWER bool
+	apply IPV6 bool
+	apply DEFAULT_ROUTE bool
+	db_stop
 	# Generate the stanza and the interface-name rule, rename a modem
 	# interface that is already present.
 	wwan-manager-setup
