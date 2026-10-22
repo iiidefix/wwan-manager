@@ -1,6 +1,9 @@
 # /etc/default/wwan-manager — LTE modem connection settings (Sierra Wireless
 # EM7455 / Dell DW5811e). After changing LTE_IFACE or METRIC, run:
 # wwan-manager-setup
+#
+# Every setting here can also be set in the environment, which wins over this
+# file (which wins over the built-in default), e.g.: IPV6=yes ifup wwan0
 
 # Network interface of the modem, and the metric of its default route
 # (higher = lower priority than the primary uplink).

@@ -10,8 +10,8 @@
 # (AT!CUSTOM="UIM2ENABLE",0 and a modem reset) and wait for slot 1.
 # Refuses while LTE is up (ifup'd), unless --force; LTE is then hung up and
 # not brought back, that is up to whoever brought it up.
-LTE_IFACE=wwan0
-[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+. /usr/share/wwan-manager/config.sh
+load_config LTE_IFACE=wwan0   # defaults < /etc/default/wwan-manager < environment
 
 log() {  # to the caller and the journal
 	echo "wwan-sim: $*" >&2
@@ -40,7 +40,7 @@ wait_for() {  # wait_for SECONDS COMMAND... — retry COMMAND every second
 }
 
 at_ready() { wwan-at AT 2>/dev/null | grep -qx OK; }
-at_gone() { AT_PORT=/dev/wwan-at; [ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager; [ ! -c "$AT_PORT" ]; }
+at_gone() { load_config AT_PORT=/dev/wwan-at; [ ! -c "$AT_PORT" ]; }
 sim_ready() { wwan-at AT+CPIN? 2>/dev/null | grep -q 'CPIN: READY'; }
 registered() { wwan-at AT+CEREG? AT+CREG? 2>/dev/null | grep -qE 'REG: [0-9],[15]'; }
 

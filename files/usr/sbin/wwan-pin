@@ -8,8 +8,8 @@
 # lock as it is. Every wrong PIN costs one of the SIM's tries and the last
 # one locks it (PUK), so a PIN must be 4-8 digits and nothing is sent with
 # fewer than 2 tries left.
-LTE_IFACE=wwan0
-[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+. /usr/share/wwan-manager/config.sh
+load_config LTE_IFACE=wwan0   # defaults < /etc/default/wwan-manager < environment
 
 log() {  # to the caller and the journal; never pass the PIN
 	echo "wwan-pin: $*" >&2

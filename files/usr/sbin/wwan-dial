@@ -29,18 +29,14 @@
 # Laptop modules keep the radio off until the host sends the "FCC
 # authentication" (BIOS vote in AT!PCINFO?). It is lost on every modem
 # restart, so it is sent before each dial.
-LTE_IFACE=wwan0
-METRIC=700
-TABLE=700         # routing table of the LTE routes; empty = main table
-RULE_PREF=1000    # priority of the rules that send LTE traffic to TABLE
-FWMARK=700        # packets with this mark (SO_MARK, mtr --mark) use TABLE; empty = no rule
-DNS=              # LTE nameservers; empty = the ones from the modem
-AT_PORT=/dev/wwan-at
-QMI_PROFILE=1     # 3GPP profile (PDP context) with the APN, see AT+CGDCONT?
-LOW_POWER=no      # yes = down (ifdown) also switches the radio off, as off does
-IPV6=no           # yes = also start an IPv6 session
-DEFAULT_ROUTE=no  # yes = send all internet traffic over LTE while it is up
-[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+. /usr/share/wwan-manager/config.sh
+# Settings, see /etc/default/wwan-manager: defaults here, overridden by that
+# file, overridden by the environment. TABLE: routing table of the LTE routes
+# (empty = main table); RULE_PREF: priority of the rules that send LTE traffic
+# to TABLE; FWMARK: packets with this mark (SO_MARK, mtr --mark) use TABLE
+# (empty = no rule); DNS: LTE nameservers (empty = the modem's).
+load_config LTE_IFACE=wwan0 METRIC=700 TABLE=700 RULE_PREF=1000 FWMARK=700 DNS= \
+	AT_PORT=/dev/wwan-at QMI_PROFILE=1 LOW_POWER=no IPV6=no DEFAULT_ROUTE=no
 iface=${IFACE:-$LTE_IFACE}
 qmi_state=/run/wwan/$iface.qmi
 qmi_state6=/run/wwan/$iface.qmi6

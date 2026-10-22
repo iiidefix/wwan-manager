@@ -256,6 +256,25 @@ wwan-at 'AT!GSTATUS?' 'AT!PCINFO?'      # radio state and locks
 `LTE_IFACE` or `METRIC`, run `wwan-manager-setup`. Change `TABLE` while LTE is
 down: the rules of the old table are only removed at hang-up.
 
+Every option can also be set in the environment, for one call. Lowest to
+highest preference: the built-in default, `/etc/default/wwan-manager`, the
+environment (an empty value counts), for example:
+
+```sh
+IPV6=yes DEFAULT_ROUTE=yes ifup wwan0
+QMI_PROFILE=2 wwan-apn
+AT_PORT=/dev/ttyUSB2 wwan-at ATI
+```
+
+`ifup` and `ifdown` clear the environment before they run `wwan-dial`, so a
+setting in the environment does not reach a dial started that way: for a
+single dial with other settings run `wwan-dial up` yourself (it does not go
+through `ifup`, so `ifdown` does not know about it; hang up with
+`wwan-dial down`), or change `/etc/default/wwan-manager`. `LTE_IFACE` and
+`METRIC` only reach the generated stanza and udev rule when
+`wwan-manager-setup` runs with them. The commands read the settings through
+`/usr/share/wwan-manager/config.sh`.
+
 | Option | Default | Meaning |
 |---|---|---|
 | `LTE_IFACE` | `wwan0` | Modem network interface |
@@ -273,8 +292,8 @@ down: the rules of the old table are only removed at hang-up.
 ## Build and install
 
 ```sh
-make                    # → dist/wwan-manager_1.2.0_all.deb
-make VERSION=1.2.1      # another version
+make                    # → dist/wwan-manager_1.3.0_all.deb
+make VERSION=1.3.1      # another version
 make clean
 dpkg -i dist/wwan-manager_*.deb
 ```

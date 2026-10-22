@@ -1,8 +1,8 @@
 #!/bin/bash
 # wwan-at 'AT...' [...] — send AT commands to the modem, print replies.
 # Serialised with flock so the dialer and other callers never talk over each other.
-AT_PORT=/dev/wwan-at
-[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+. /usr/share/wwan-manager/config.sh
+load_config AT_PORT=/dev/wwan-at   # defaults < /etc/default/wwan-manager < environment
 dev=${WWAN_AT_PORT:-$AT_PORT}
 # Never open a missing port: writing to it would create a regular file that
 # blocks the kernel from creating the real device node when the modem appears.

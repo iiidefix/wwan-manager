@@ -8,9 +8,8 @@
 # type, else IPV4V6) and read it back. It takes effect with the next dial.
 # Refuses while LTE is up (ifup'd), unless --force; LTE is then hung up and
 # not brought back, that is up to whoever brought it up.
-LTE_IFACE=wwan0
-QMI_PROFILE=1
-[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+. /usr/share/wwan-manager/config.sh
+load_config LTE_IFACE=wwan0 QMI_PROFILE=1   # defaults < /etc/default/wwan-manager < environment
 
 log() {  # to the caller and the journal
 	echo "wwan-apn: $*" >&2

@@ -3,10 +3,10 @@
 #  - the ifupdown stanza for the LTE interface, and
 #  - the udev rule that gives the modem's network interface that name.
 # Run after changing LTE_IFACE or METRIC; the package runs it on install.
-LTE_IFACE=wwan0
-METRIC=700
-MODEM_USB_IDS="1199:9071 413c:81b6"   # EM7455; DW5811e with Dell's identity
-[ -r /etc/default/wwan-manager ] && . /etc/default/wwan-manager
+. /usr/share/wwan-manager/config.sh
+# defaults < /etc/default/wwan-manager < environment
+# MODEM_USB_IDS: EM7455; DW5811e with Dell's identity
+load_config LTE_IFACE=wwan0 METRIC=700 MODEM_USB_IDS="1199:9071 413c:81b6"
 stanza=/etc/network/interfaces.d/wwan-manager
 rule=/etc/udev/rules.d/90-wwan-manager-ifname.rules
 
