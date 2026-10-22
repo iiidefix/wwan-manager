@@ -7,9 +7,10 @@ itself. It doesn't depend on any user of the connection.
 
 Supported: the EM7455 (M.2 in a USB adapter), `1199:9071`, and the DW5811e,
 either with Dell's identity `413c:81b6` or converted to the Sierra one, both
-in QMI configuration. Tested: an EM7455 (firmware SWI9X30C_02.39.00.00) and
-a DW5811e (EM7455B, now on the same firmware) converted to the Sierra
-identity.
+in QMI configuration. Tested: an EM7455 (firmware SWI9X30C_02.39.00.00), a
+DW5811e (EM7455B, now on the same firmware) converted to the Sierra identity,
+and a DW5811e with Dell's identity (firmware 02.24.03.00). Other modems are not
+supported; the Huawei ME906s, for example, has no QMI interface.
 
 ## How it works
 
@@ -42,7 +43,8 @@ there is no DHCP and the address comes from the modem.
 | `/usr/sbin/wwan-pin [off\|change]` | Shows the SIM PIN state, switches the PIN lock off or changes the PIN, see [SIM PIN](#sim-pin) |
 | `/usr/sbin/wwan-apn [--force] [--profile N] [APN [TYPE]]` | Shows or sets the APN, see [APN](#apn) |
 | `/usr/sbin/wwan-manager-setup` | Generates the ifupdown stanza and the interface-name udev rule from the settings; renames an already present modem interface |
-| `/usr/share/bash-completion/completions/wwan-{dial,sim,pin,apn}` | Bash completion of the subcommands, `--force` and the PDP type (needs the `bash-completion` package) |
+| `/usr/share/bash-completion/completions/wwan-{dial,sim,pin,apn}` | Bash completion of the subcommands, `--force`, `--profile` and the PDP type (needs the `bash-completion` package) |
+| `/usr/share/wwan-manager/config.sh` | `load_config`, which the commands use to read the settings, see [Configuration](#configuration) |
 | `/usr/lib/udev/rules.d/90-wwan-manager.rules` | `/dev/wwan-at` symlink to the AT port on USB interface 03 (`1199:9071`, `413c:81b6`) |
 | `/etc/network/interfaces.d/wwan-manager` | *Generated:* `iface <LTE_IFACE> inet manual` with `up`/`down` `wwan-dial`; no `auto`/`allow-hotplug` |
 | `/etc/udev/rules.d/90-wwan-manager-ifname.rules` | *Generated:* names the modem's network interface `LTE_IFACE` |
@@ -69,14 +71,16 @@ for whoever routes traffic over LTE.
 - **Never open a missing serial port.** That would create a regular file
   blocking the real device node. `wwan-at` refuses to run unless the port is
   a character device.
-- **IPv4 only.** The EM7455 supports IPv4+IPv6, but `wwan-dial` starts an
-  IPv4 session.
+- **IPv4 by default.** The EM7455 supports IPv4+IPv6; `wwan-dial` starts an
+  IPv6 session as well only with `IPV6=yes`, see [IPv6](#ipv6).
 
 ### Routing
 
 The LTE routes live in their own routing table, `TABLE` (default 700), so
-bringing LTE up does not take traffic away by itself: the main table never
-gets an LTE default route. After the address is set, `wwan-dial`
+bringing LTE up does not take traffic away by itself: the main table gets no
+LTE default route (unless `TABLE` is empty, or `DEFAULT_ROUTE=yes`, see
+[LTE as the default route](#lte-as-the-default-route)). After the address is
+set, `wwan-dial`
 
 - moves the interface's gateway routes (the default route, metric
   `METRIC`) from the main table into `TABLE`;
@@ -99,6 +103,41 @@ ip rule
 ip route get 1.1.1.1 oif wwan0   # → via the LTE gateway, table 700
 ```
 
+## LTE as the default route
+
+By default LTE is a backup: its default route is only in `TABLE`, for traffic
+bound to the interface. With `DEFAULT_ROUTE=yes`, `wwan-dial up` also adds
+`0.0.0.0/1` and `128.0.0.0/1` via the modem to the main table (and `::/1` and
+`8000::/1` with `IPV6=yes`), with `METRIC`. Two half-default routes are more
+specific than any default route, so they win whatever metric the primary
+uplink's has (DHCP routes have 0), and `ifdown` removes them again.
+
+Only destinations that have a route of their own stay on the primary uplink:
+its subnet, and any static routes, for example to internal networks. Traffic
+that used the primary uplink's default gateway moves to LTE, including other
+internal networks reached through that gateway. Add static routes for them
+before switching the option on. DNS is not changed (`/run/wwan/<iface>.dns`).
+
+## IPv6
+
+Optional, off by default. With `IPV6=yes` in `/etc/default/wwan-manager`,
+`wwan-dial up` starts a second QMI WDS session for IPv6 after the IPv4 one
+(the modem keeps one address family per session; the client's IP family
+preference is set with WDS `0x004D`). The profile's PDP type must be
+`IPV4V6` or `IPV6` (`wwan-apn`, default `IPV4V6`).
+
+The address, prefix length and gateway come from the modem (WDS `0x002D`,
+TLVs `0x25` and `0x26`); no router advertisements are accepted on the
+interface (`accept_ra=0`), as they would put a default route into the main
+table. The default route goes into `TABLE` with `METRIC`, with the same rules
+as for IPv4 (traffic bound to the interface or its address, `FWMARK`); with an
+empty `TABLE` it goes into the main table. If `DNS` is empty, the modem's IPv6
+nameservers are added to `/run/wwan/<iface>.dns`. `ifdown` removes the address,
+routes and rules and ends both sessions.
+
+If the IPv6 session fails, the connection stays IPv4-only; the journal
+(`-t wwan-dial`) says so.
+
 ## Modem setup
 
 The module must be in the QMI USB configuration, `AT!USBCOMP=1,1,0000010D`
@@ -106,8 +145,8 @@ The module must be in the QMI USB configuration, `AT!USBCOMP=1,1,0000010D`
 DW5811e come in MBIM configuration. Extended commands are unlocked with
 `AT!ENTERCND="A710"`. A DW5811e can keep Dell's identity (`413c:81b6`) or be
 converted to the Sierra one (`1199:9071`). Step by step, including the
-conversion, the FCC lock and the firmware update:
-[EM7455-SETUP.md](EM7455-SETUP.md).
+conversion, a module that shows no AT port (MBIM only), the FCC lock and the
+firmware update: [EM7455-SETUP.md](EM7455-SETUP.md).
 
 ## FCC lock
 
@@ -178,41 +217,6 @@ different contexts: write one with `wwan-apn --profile N` and dial it with
 `wwan-dial up --profile N` run by hand does not go through `ifup`, so
 `ifdown` does not know about it; hang up with `wwan-dial down`.
 
-## LTE as the default route
-
-By default LTE is a backup: its default route is only in `TABLE`, for traffic
-bound to the interface. With `DEFAULT_ROUTE=yes`, `wwan-dial up` also adds
-`0.0.0.0/1` and `128.0.0.0/1` via the modem to the main table (and `::/1` and
-`8000::/1` with `IPV6=yes`), with `METRIC`. Two half-default routes are more
-specific than any default route, so they win whatever metric the primary
-uplink's has (DHCP routes have 0), and `ifdown` removes them again.
-
-Only destinations that have a route of their own stay on the primary uplink:
-its subnet, and any static routes, for example to internal networks. Traffic
-that used the primary uplink's default gateway moves to LTE, including other
-internal networks reached through that gateway. Add static routes for them
-before switching the option on. DNS is not changed (`/run/wwan/<iface>.dns`).
-
-## IPv6
-
-Optional, off by default. With `IPV6=yes` in `/etc/default/wwan-manager`,
-`wwan-dial up` starts a second QMI WDS session for IPv6 after the IPv4 one
-(the modem keeps one address family per session; the client's IP family
-preference is set with WDS `0x004D`). The profile's PDP type must be
-`IPV4V6` or `IPV6` (`wwan-apn`, default `IPV4V6`).
-
-The address, prefix length and gateway come from the modem (WDS `0x002D`,
-TLVs `0x25` and `0x26`); no router advertisements are accepted on the
-interface (`accept_ra=0`), as they would put a default route into the main
-table. The default route goes into `TABLE` with `METRIC`, with the same rules
-as for IPv4 (traffic bound to the interface or its address, `FWMARK`); with an
-empty `TABLE` it goes into the main table. If `DNS` is empty, the modem's IPv6
-nameservers are added to `/run/wwan/<iface>.dns`. `ifdown` removes the address,
-routes and rules and ends both sessions.
-
-If the IPv6 session fails, the connection stays IPv4-only; the journal
-(`-t wwan-dial`) says so.
-
 ## SIM PIN
 
 `wwan-manager` needs a SIM without PIN. To switch the PIN lock off for the SIM
@@ -237,18 +241,6 @@ switched off. `change` uses `AT+CPWD="SC"`: it sets a new PIN without
 touching the lock (off stays off, on stays on), has the same checks, and
 refuses a new PIN equal to the current one. Logged under the tag `wwan-pin`
 (never a PIN).
-
-## Diagnostics
-
-`wwan-dial` logs each step to stderr (shown by `ifup`) and to the journal
-under the tag `wwan-dial`. If a dial fails, it logs SIM, signal, operator,
-registration, low-power votes (`AT!PCINFO?`), `AT!GSTATUS?` (band, RSRP,
-EMM/RRC state), PDP contexts and `+CEER`.
-
-```sh
-journalctl -t wwan-dial -t wwan-sim -t wwan-pin -t wwan-apn
-wwan-at 'AT!GSTATUS?' 'AT!PCINFO?'      # radio state and locks
-```
 
 ## Configuration
 
@@ -291,22 +283,25 @@ through `ifup`, so `ifdown` does not know about it; hang up with
 
 ## Questions at install
 
-wwan-manager asks for its settings with debconf when it is installed (the main
-ones at the default priority, the rest at low priority) and writes the
-answers into `/etc/default/wwan-manager`. Look at everything, or change the answers
-later, with:
+`wwan-manager` asks for its settings with debconf when it is installed (the
+main ones at the default priority, the rest at low priority) and writes the
+answers into `/etc/default/wwan-manager`. Look at everything, or change the
+answers later, with:
 
 ```sh
 dpkg-reconfigure -plow wwan-manager
 ```
 
 An installation without a terminal uses the defaults, or preseeded answers
-(`debconf-set-selections`, question names `wwan-manager/<setting in lower case>`, for
-example `wwan-manager/ipv6`). The file stays the truth for a running system: a value
-in it that differs from the shipped default (set by hand, or by an earlier
-answer) is the starting point of the question and is not replaced by a
-preseeded or older answer. Only lines whose value changed are rewritten,
-other lines and comments stay. An empty answer for a setting that cannot be empty (interface, metric, AT port, profile) is ignored; an empty `TABLE` or `DNS` is valid. After a new `LTE_IFACE` or `METRIC` the install runs `wwan-manager-setup`.
+(`debconf-set-selections`, question names
+`wwan-manager/<setting in lower case>`, for example `wwan-manager/ipv6`). The
+file stays the truth for a running system: a value in it that differs from the
+shipped default (set by hand, or by an earlier answer) is the starting point
+of the question and is not replaced by a preseeded or older answer. Only lines
+whose value changed are rewritten, other lines and comments stay. An empty
+answer for a setting that cannot be empty (interface, metric, AT port,
+profile) is ignored; an empty `TABLE` or `DNS` is valid. After a new
+`LTE_IFACE` or `METRIC` the install runs `wwan-manager-setup`.
 
 ## Build and install
 
@@ -334,6 +329,18 @@ wwan-dial down                            # hang up, also while wwan0 is down
 ifdown wwan0; wwan-dial off               # hang up and switch the radio off (LOW_POWER=yes: ifdown alone)
 wwan-dial on                              # radio on again, without dialing
 journalctl -t wwan-dial
+```
+
+## Diagnostics
+
+`wwan-dial` logs each step to stderr (shown by `ifup`) and to the journal
+under the tag `wwan-dial`. If a dial fails, it logs SIM, signal, operator,
+registration, low-power votes (`AT!PCINFO?`), `AT!GSTATUS?` (band, RSRP,
+EMM/RRC state), PDP contexts and `+CEER`.
+
+```sh
+journalctl -t wwan-dial -t wwan-sim -t wwan-pin -t wwan-apn
+wwan-at 'AT!GSTATUS?' 'AT!PCINFO?'      # radio state and locks
 ```
 
 ## License
