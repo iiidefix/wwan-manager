@@ -11,7 +11,7 @@
 # Refuses while LTE is up (ifup'd), unless --force; LTE is then hung up and
 # not brought back, that is up to whoever brought it up.
 . /usr/share/wwan-manager/config.sh
-load_config LTE_IFACE=wwan0   # defaults < /etc/default/wwan-manager < environment
+load_config LTE_IFACE=wwan0 AT_PORT=/dev/wwan-at   # defaults < /etc/default/wwan-manager < environment
 
 log() {  # to the caller and the journal
 	echo "wwan-sim: $*" >&2
@@ -40,12 +40,13 @@ wait_for() {  # wait_for SECONDS COMMAND... — retry COMMAND every second
 }
 
 at_ready() { wwan-at AT 2>/dev/null | grep -qx OK; }
-at_gone() { load_config AT_PORT=/dev/wwan-at; [ ! -c "$AT_PORT" ]; }
+at_gone() { [ ! -c "$AT_PORT" ]; }
 sim_ready() { wwan-at AT+CPIN? 2>/dev/null | grep -q 'CPIN: READY'; }
 registered() { wwan-at AT+CEREG? AT+CREG? 2>/dev/null | grep -qE 'REG: [0-9],[15]'; }
 
 status() {
 	local slot
+	require_at_port
 	slot=$(active_slot) || true
 	echo "active SIM: slot ${slot:-?}, UIM2 $(uim2_enabled && echo enabled || echo disabled)"
 	# +CPIN: READY = SIM usable, SIM PIN = PIN needed, CME ERROR 10 = no SIM
@@ -91,6 +92,7 @@ wait_active() {  # wait_active SLOT — check the slot, wait for SIM and registr
 
 switch() {
 	local want=$1 cur
+	require_at_port
 	cur=$(active_slot) || { log "modem not answering on the AT port"; exit 1; }
 	[ "$cur" = "$want" ] && { echo "wwan-sim: slot $want is already active"; return 0; }
 	hang_up switching
@@ -105,6 +107,7 @@ switch() {
 
 disable_uim2() {
 	local cur
+	require_at_port
 	cur=$(active_slot) || { log "modem not answering on the AT port"; exit 1; }
 	if [ "$cur" = 1 ] && ! uim2_enabled; then
 		echo "wwan-sim: UIM2 is already disabled"

@@ -9,7 +9,7 @@
 # Refuses while LTE is up (ifup'd), unless --force; LTE is then hung up and
 # not brought back, that is up to whoever brought it up.
 . /usr/share/wwan-manager/config.sh
-load_config LTE_IFACE=wwan0 QMI_PROFILE=1   # defaults < /etc/default/wwan-manager < environment
+load_config LTE_IFACE=wwan0 QMI_PROFILE=1 AT_PORT=/dev/wwan-at   # defaults < /etc/default/wwan-manager < environment
 
 log() {  # to the caller and the journal
 	echo "wwan-apn: $*" >&2
@@ -18,6 +18,7 @@ log() {  # to the caller and the journal
 
 context() {  # print "TYPE APN" of context QMI_PROFILE (empty if undefined)
 	local out
+	require_at_port
 	out=$(wwan-at AT+CGDCONT?) || { log "modem not answering on the AT port"; exit 1; }
 	echo "$out" | sed -n "s/^+CGDCONT: *$QMI_PROFILE,\"\([^\"]*\)\",\"\([^\"]*\)\".*/\1 \2/p"
 }

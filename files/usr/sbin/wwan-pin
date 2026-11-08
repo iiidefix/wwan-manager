@@ -9,11 +9,16 @@
 # one locks it (PUK), so a PIN must be 4-8 digits and nothing is sent with
 # fewer than 2 tries left.
 . /usr/share/wwan-manager/config.sh
-load_config LTE_IFACE=wwan0   # defaults < /etc/default/wwan-manager < environment
+load_config LTE_IFACE=wwan0 AT_PORT=/dev/wwan-at   # defaults < /etc/default/wwan-manager < environment
 
 log() {  # to the caller and the journal; never pass the PIN
 	echo "wwan-pin: $*" >&2
 	logger -t wwan-pin -- "$*"
+}
+
+need_modem() {  # the AT port for the SIM, the interface for the PIN tries left (QMI)
+	require_at_port
+	[ -e "/sys/class/net/$LTE_IFACE" ] || { log "no modem connected: no interface $LTE_IFACE"; exit 1; }
 }
 
 at() {
@@ -38,6 +43,7 @@ tries() {  # PIN1 tries left, from QMI DMS "UIM Get PIN Status" (TLV 0x11: statu
 
 status() {
 	local state
+	need_modem
 	state=$(sim_state)
 	[ -n "$state" ] || { log "modem not answering on the AT port"; exit 1; }
 	echo "SIM: $state, PIN lock: $(lock_on && echo on || echo off), PIN tries left: $(tries)"
@@ -57,6 +63,7 @@ read_pin() {  # read_pin [PROMPT]
 
 off() {
 	local state n pin
+	need_modem
 	state=$(sim_state)
 	case $state in
 	READY) lock_on || { echo "wwan-pin: PIN lock is already off"; return 0; } ;;
@@ -83,6 +90,7 @@ off() {
 
 change() {
 	local state n old new again
+	need_modem
 	state=$(sim_state)
 	case $state in
 	READY|"SIM PIN") ;;

@@ -15,3 +15,10 @@ load_config() {
 	done
 	return 0
 }
+
+# require_at_port — exit 1, through the caller's log(), unless the modem's AT
+# port (AT_PORT from load_config; WWAN_AT_PORT wins, as in wwan-at) is there.
+require_at_port() {
+	local dev=${WWAN_AT_PORT:-$AT_PORT}
+	[ -c "$dev" ] || { log "no modem connected: $dev is not a serial device"; exit 1; }
+}

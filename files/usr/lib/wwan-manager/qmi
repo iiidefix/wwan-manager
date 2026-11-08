@@ -66,7 +66,10 @@ for arg in args[3:]:
 	val = bytes.fromhex(v.replace(":", ""))
 	payload += struct.pack("<BH", int(t, 0), len(val)) + val
 
-fd = os.open(dev, os.O_RDWR)
+try:
+	fd = os.open(dev, os.O_RDWR)
+except OSError as e:
+	raise SystemExit(f"qmi: can't open '{dev}': {e.strerror}")
 if service != 0 and not cid:
 	resp = dict(call(fd, 0, 0, 1, 0x0022, struct.pack("<BHB", 0x01, 1, service)))
 	if 0x01 not in resp:

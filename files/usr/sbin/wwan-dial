@@ -76,6 +76,7 @@ modem_ready() {  # wait for the QMI and AT ports, set raw IP, unlock the radio
 		sleep 1
 	done
 	[ -n "$dev" ] && [ -c "$dev" ] || { echo "no QMI control device for $iface"; return 1; }
+	[ -c "$AT_PORT" ] || { echo "no AT port $AT_PORT"; return 1; }
 	qmi "$dev" wda 0x0020 0x11:02000000 >/dev/null   # raw IP on the modem side too
 	if [ "$(cat "/sys/class/net/$iface/qmi/raw_ip")" != Y ]; then
 		ip link set "$iface" down
@@ -133,7 +134,7 @@ modem_hangup() {  # modem_hangup [STATE-FILE]
 modem_low_power() {  # operating mode low power; modem_ready sets it online again
 	local dev
 	dev=$(qmi_dev)
-	[ -n "$dev" ] || { echo "no modem connected"; return 1; }
+	[ -n "$dev" ] || { echo "no modem connected, can't switch to low-power mode"; return 1; }
 	qmi "$dev" dms 0x002e 0x01:01 | grep -q success || { echo "modem refuses low-power mode"; return 1; }
 }
 
@@ -318,7 +319,11 @@ down() {
 	address_down
 	modem_hangup "$qmi_state6" >/dev/null 2>&1
 	if msg=$(modem_hangup 2>&1); then
-		log "$iface: hung up"
+		if [ -e "/sys/class/net/$iface" ]; then
+			log "$iface: hung up"
+		else
+			log "$iface: no modem connected, nothing to hang up"
+		fi
 	else
 		log "$iface: hang-up failed: $(echo "$msg" | tail -1)"
 		return 1
@@ -347,7 +352,9 @@ if [ "$1" = up ] && [ "$2" = --profile ]; then
 fi
 case $1 in
 up)   up ;;
-down) if [ "$LOW_POWER" = yes ]; then off; else down; fi ;;
+# Without a modem down still succeeds: the session is gone and ifdown must not
+# stay stuck on an unplugged modem. Only off fails, it can't do what it says.
+down) if [ "$LOW_POWER" = yes ] && [ -e "/sys/class/net/$iface" ]; then off; else down; fi ;;
 off)  off ;;
 on)   on ;;
 *)

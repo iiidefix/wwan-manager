@@ -71,6 +71,10 @@ for whoever routes traffic over LTE.
 - **Never open a missing serial port.** That would create a regular file
   blocking the real device node. `wwan-at` refuses to run unless the port is
   a character device.
+- **No modem, clean failure.** Without `/dev/wwan-at` or the LTE interface,
+  every command that needs them says which one is missing and exits 1, before
+  touching LTE. `wwan-dial down` is the exception: it clears the local state
+  and exits 0, so `ifdown` works on an unplugged modem.
 - **IPv4 by default.** The EM7455 supports IPv4+IPv6; `wwan-dial` starts an
   IPv6 session as well only with `IPV6=yes`, see [IPv6](#ipv6).
 
@@ -306,7 +310,7 @@ profile) is ignored; an empty `TABLE` or `DNS` is valid. After a new
 ## Build and install
 
 ```sh
-make                    # → dist/wwan-manager_1.4.0_all.deb
+make                    # → dist/wwan-manager_1.4.1_all.deb
 make VERSION=1.4.1      # another version
 make clean
 dpkg -i dist/wwan-manager_*.deb
