@@ -1,9 +1,9 @@
 # Build this Debian package into dist/.
 #   make                     build dist/<package>_<version>_all.deb
-#   make VERSION=1.4.2       build another version
+#   make VERSION=1.4.3       build another version
 #   make clean               remove build output
 PACKAGE    := $(shell sed -n 's/^Package: //p' debian/control)
-VERSION    ?= 1.4.1
+VERSION    ?= 1.4.2
 MAINTAINER ?= iiidefix <iiidefix@git.iiidefix.net>
 DEB        := dist/$(PACKAGE)_$(VERSION)_all.deb
 ROOT       := build/root

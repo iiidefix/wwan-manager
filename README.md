@@ -310,7 +310,7 @@ profile) is ignored; an empty `TABLE` or `DNS` is valid. After a new
 ## Build and install
 
 ```sh
-make                    # → dist/wwan-manager_1.4.1_all.deb
+make                    # → dist/wwan-manager_1.4.2_all.deb
 make VERSION=1.4.1      # another version
 make clean
 dpkg -i dist/wwan-manager_*.deb

@@ -50,7 +50,7 @@ status() {
 	slot=$(active_slot) || true
 	echo "active SIM: slot ${slot:-?}, UIM2 $(uim2_enabled && echo enabled || echo disabled)"
 	# +CPIN: READY = SIM usable, SIM PIN = PIN needed, CME ERROR 10 = no SIM
-	wwan-at AT+CPIN? AT+CCID AT+CIMI AT+COPS? AT+CEREG? AT+CSQ AT+CGDCONT? | grep -vx OK
+	wwan-at AT+CPIN? AT+CCID AT+CNUM AT+CIMI AT+COPS? AT+CEREG? AT+CSQ AT+CGDCONT? | grep -vx OK
 }
 
 hang_up() {  # hang_up WHAT — refuse while LTE is up (unless --force), else hang up
