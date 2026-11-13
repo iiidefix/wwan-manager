@@ -51,6 +51,10 @@ wwan-at ATI 'AT!ENTERCND="A710"' 'AT!USBCOMP?' 'AT!IMAGE?' 'AT!PRIID?' 'AT!PCINF
 ```
 
 - `ATI` shows model (`EM7455` / `EM7455B` for the DW5811e) and firmware.
+- `ATI` also shows the serial number (`FSN: LF…`) and the `IMEI`. Without an
+  AT port, `lsusb -v -d 1199: | grep iSerial` (`-d 413c:` for the Dell
+  identity) shows the serial number followed by two more characters (seen:
+  `20`).
 - `AT!ENTERCND="A710"` unlocks the extended commands; send it before any
   other `AT!` command in the same `wwan-at` call.
 - `AT!PCINFO?` lists the "low power mode" votes that keep the radio off:
