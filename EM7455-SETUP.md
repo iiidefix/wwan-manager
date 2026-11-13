@@ -31,8 +31,8 @@ package's udev rule names its network interface), and
 manual`.
 
 **ModemManager.** Some images ship it, enabled. It probes every modem it knows
-(it has rules for Sierra modems) and opens the modem's AT and control ports
-itself, and it has been seen switching the USB configuration of a Huawei module.
+(it has rules for Sierra modems), opens the modem's AT and control ports
+itself, and can switch a modem's USB configuration.
 That gets in the way of `wwan-at`, the QMI client and the USB changes below.
 Stop it for the setup and keep it away from the modem afterwards:
 
@@ -53,8 +53,8 @@ wwan-at ATI 'AT!ENTERCND="A710"' 'AT!USBCOMP?' 'AT!IMAGE?' 'AT!PRIID?' 'AT!PCINF
 - `ATI` shows model (`EM7455` / `EM7455B` for the DW5811e) and firmware.
 - `ATI` also shows the serial number (`FSN: LF…`) and the `IMEI`. Without an
   AT port, `lsusb -v -d 1199: | grep iSerial` (`-d 413c:` for the Dell
-  identity) shows the serial number followed by two more characters (seen:
-  `20`).
+  identity) shows the serial number followed by two more characters (for
+  example `20`).
 - `AT!ENTERCND="A710"` unlocks the extended commands; send it before any
   other `AT!` command in the same `wwan-at` call.
 - `AT!PCINFO?` lists the "low power mode" votes that keep the radio off:
@@ -87,14 +87,12 @@ Check: after the reset (wait for `/dev/wwan-at`), `lsusb -t` shows
 
 **MBIM only (no AT port).** The AT port is not there to switch the
 configuration, but the module answers QMI through the MBIM port. This needs
-`qmicli` (`apt install libqmi-utils`, the only package installed from the
-internet in this guide; the same package also provides `qmi-firmware-update`
-for step 5):
+`qmicli` (`apt install libqmi-utils`):
 
 ```sh
 qmicli -d /dev/cdc-wdm0 --device-open-mbim --dms-get-model              # EM7455B
 qmicli -d /dev/cdc-wdm0 --device-open-mbim --dms-swi-get-usb-composition
-# lists the compositions; [*] marks the active one, here "9: MBIM"
+# lists the compositions; [*] marks the active one, for example "9: MBIM"
 qmicli -d /dev/cdc-wdm0 --device-open-mbim --dms-swi-set-usb-composition=6
 # 6 = DM, NMEA, AT, QMI
 qmicli -d /dev/cdc-wdm0 --device-open-mbim --dms-set-operating-mode=offline
@@ -136,21 +134,27 @@ wwan-at 'AT!ENTERCND="A710"' 'AT!USBVID=1199' 'AT!USBPID=9071,9070' \
 wwan-at 'AT!ENTERCND="A710"' 'AT!USBCOMP=1,1,0000010D' 'AT!RESET'
 ```
 
-Only the resulting values below were recorded, not the exact command lines:
-check each command's write syntax with `AT!<command>=?`
-(e.g. `AT!USBPID=?`) before sending it, and compare with the query
-(`AT!USBPID?`) afterwards.
+These command lines are tested on a DW5811e with firmware
+02.20.03.00. The four identity values are stored at once, so the queries
+(`AT!USBPID?` etc.) show them before the reset. On other firmware, check a
+command's write syntax first with `AT!<command>=?` (`AT!USBPID=?` lists the
+allowed pairs, `AT!PRIID=?` the arguments).
+
+Check: after the first reset `lsusb` shows `1199:9071`, and the module is in
+the MBIM configuration with serial ports (`AT!USBCOMP?` ends in `…100D`), so
+`/dev/wwan-at` exists. After the second reset `lsusb -t` shows `qmi_wwan`.
 
 | Setting | Dell | Sierra |
 |---|---|---|
 | `AT!USBVID` | `413C` | `1199` |
 | `AT!USBPID` | app `81B6`, boot `81B5` | app `9071`, boot `9070` |
 | `AT!USBPRODUCT` | `DW5811e Snapdragon™ X7 LTE` | `EM7455` |
-| `AT!PRIID` | `9906458`, `001.004`, `Dell` | `9904609`, `002.026`, `Generic-Laptop` |
+| `AT!PRIID` | `9906458`, `001.004` or `001.002`, `Dell` | `9904609`, `002.026`, `Generic-Laptop` |
 
 A DW5811e may already run Sierra's generic firmware and carrier
-configuration (`GENERIC_002.020_000`), so no firmware change was needed for
-the conversion itself; it was updated afterwards (step 5).
+configuration (for example `GENERIC_002.020_000`, or `GENERIC_002.017_000`
+with firmware 02.20.03.00). The conversion itself needs no firmware change;
+to update the firmware afterwards, see step 5.
 
 ## 4. FCC lock
 
@@ -171,7 +175,7 @@ wwan-at 'AT!ENTERCND="A710"' 'AT!PCFCCAUTH?' 'AT!PCINFO?'
   off right now (the per-session unlock was not sent yet). Both are fine for
   `wwan-manager`; continue only to remove the lock permanently.
 
-To disable the lock permanently (done on the EM7455; the DW5811e had none):
+To disable the lock permanently:
 
 1. Get a challenge:
    ```sh
@@ -210,7 +214,8 @@ wwan-at ATI 'AT!ENTERCND="A710"' 'AT!IMAGE?'
   `02.39.00.00` for the FW slot and the `PRI` line (`…_GENERIC`): up to
   date, skip the rest of this step.
 - Anything older (e.g. `02.24.03.00`): update. This is optional;
-  `wwan-manager` dials with older firmware too (checked with 02.24.03.00).
+  `wwan-manager` dials with older firmware too (tested with 02.24.03.00
+  and 02.20.03.00).
 
 Use the complete package with firmware and carrier
 configuration, `SWI9X30C_02.39.00.00_GENERIC_002.085_000.zip` (Sierra
@@ -242,9 +247,9 @@ Expected: firmware 02.39.00.00, configuration and preference
 
 **Firmware preference.** If the module's preferred firmware (QMI DMS
 `0x0048`) names an image that isn't installed, the radio stays off
-(`IMSWITCH` vote). An EM7455 preferred `02.24.05.06_GENERIC` while
-running 02.39.00.00; setting the preference to the running firmware with
-`/usr/lib/wwan-manager/qmi /dev/cdc-wdm0 dms 0x0048 …` cleared the vote after
+(`IMSWITCH` vote). Example: the module prefers `02.24.05.06_GENERIC` while
+running 02.39.00.00. Set the preference to the running firmware with
+`/usr/lib/wwan-manager/qmi /dev/cdc-wdm0 dms 0x0048 …`; the vote clears after
 two modem restarts.
 
 ## 6. Radio settings
@@ -271,6 +276,11 @@ wwan-at 'AT!ENTERCND="A710"' 'AT!SELRAT=06' 'AT!BAND=09' 'AT!PCOFFEN=2' \
 | `AT!CUSTOM` | GPSENABLE unset, FASTENUMEN `0x02`; GPSSEL, IPV6ENABLE, SIMLPM, USBSERIALENABLE, SINGLEAPNSWITCH = 1 (`IPV6ENABLE` is needed for `IPV6=yes`) |
 | APN, context 1 (`AT+CGDCONT=1`) | `IPV4V6` and your carrier's APN (`internet.telekom` for Telekom.de) |
 
+The command above does not change `AT!CUSTOM`. A DW5811e with firmware
+02.20.03.00 comes with `SELRAT` `00`, `BAND` `00`, `PCOFFEN` `0`, an empty APN,
+`GPSENABLE` `0x01` and no `FASTENUMEN`; it dials with its `AT!CUSTOM` values
+unchanged.
+
 `wwan-dial` starts context 1 (`QMI_PROFILE=1` in `/etc/default/wwan-manager`;
 `wwan-dial up --profile N` and `wwan-apn --profile N` use another one),
 so the APN lives in the modem, not in `wwan-manager`'s settings. `wwan-apn
@@ -295,7 +305,9 @@ Checks:
 
 - `wwan-at AT+CPIN? AT+COPS? AT+CEREG?` → `READY`, your operator with
   access technology `7` (LTE), `+CEREG: 0,1` (registered). A wrong APN makes
-  the dial fail quietly: check the APN first.
+  the dial fail quietly: check the APN first. Right after a reset the modem
+  can answer `+CME ERROR: SIM not inserted` and `+CEREG: 0,2` (searching);
+  ask again after about 30 s.
 - `wwan-apn` → `context 1: APN <apn>, PDP type IPV4V6`.
 - `ifup wwan0` → `wwan-dial: wwan0: up, <address>/<prefix>`; `ip route show
   table 700` has `default via … dev wwan0 metric 700`.
