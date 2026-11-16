@@ -40,7 +40,7 @@ there is no DHCP and the address comes from the modem.
 | `/usr/lib/wwan-manager/qmi` | Minimal QMI client: one request to a QMI service via `/dev/cdc-wdmN`, response as TLVs; can keep its client id for WDS sessions |
 | `/usr/sbin/wwan-at` | Sends AT commands to `AT_PORT`, serialised with flock |
 | `/usr/sbin/wwan-sim [--force] [1\|2\|2 off]` | Shows or switches the active SIM (dual-SIM carrier boards) or disables slot 2, see [Dual SIM](#dual-sim) |
-| `/usr/sbin/wwan-pin [off\|change]` | Shows the SIM PIN state, switches the PIN lock off or changes the PIN, see [SIM PIN](#sim-pin) |
+| `/usr/sbin/wwan-pin [off\|on\|change]` | Shows the SIM PIN state, switches the PIN lock off or on, or changes the PIN, see [SIM PIN](#sim-pin) |
 | `/usr/sbin/wwan-apn [--force] [--profile N] [APN [TYPE]]` | Shows or sets the APN, see [APN](#apn) |
 | `/usr/sbin/wwan-manager-setup` | Generates the ifupdown stanza and the interface-name udev rule from the settings; renames an already present modem interface |
 | `/usr/share/bash-completion/completions/wwan-{dial,sim,pin,apn}` | Bash completion of the subcommands, `--force`, `--profile` and the PDP type (needs the `bash-completion` package) |
@@ -230,20 +230,24 @@ in the active slot (`wwan-sim`):
 wwan-pin                # SIM state, PIN lock, tries left
 wwan-pin off            # asks for the PIN
 echo 1234 | wwan-pin off
+wwan-pin on             # asks for the PIN; switches the lock on again
 wwan-pin change         # asks for the current PIN, then the new one twice
 printf '%s\n' 1234 5678 | wwan-pin change    # current, new
 ```
 
-It uses `AT+CPIN` and `AT+CLCK="SC"`; the tries left come from QMI DMS
-"UIM Get PIN Status" (`0x002B`, TLV `0x11`), through
-`/usr/lib/wwan-manager/qmi`.
+It uses `AT+CPIN` and `AT+CLCK="SC"`; the tries left come from
+`AT+CPINR="SIM PIN"`.
 Every wrong PIN costs one of the SIM's tries (usually 3) and the last one
 blocks the SIM until the PUK is entered. So `off` only accepts 4–8 digits
 and sends nothing when it can't read the tries left or fewer than 2 are
 left. A SIM waiting for its PIN is unlocked first, then the lock is
-switched off. `change` uses `AT+CPWD="SC"`: it sets a new PIN without
-touching the lock (off stays off, on stays on), has the same checks, and
-refuses a new PIN equal to the current one. Logged under the tag `wwan-pin`
+switched off; it waits until the SIM answers `AT+CIMI`, because it rejects
+`AT+CLCK` and `AT+CPWD` for about 1 s after the PIN. `on` switches the
+lock on again (`AT+CLCK="SC",1`) with the same checks; after the next modem
+reset the SIM waits for its PIN, and `wwan-manager` can't dial until
+`wwan-pin off` or `change` has entered it. `change` uses `AT+CPWD="SC"`: it
+sets a new PIN without touching the lock (off stays off, on stays on), has
+the same checks, and refuses a new PIN equal to the current one. Logged under the tag `wwan-pin`
 (never a PIN).
 
 ## Configuration
@@ -310,7 +314,7 @@ profile) is ignored; an empty `TABLE` or `DNS` is valid. After a new
 ## Build and install
 
 ```sh
-make                    # → dist/wwan-manager_1.4.2_all.deb
+make                    # → dist/wwan-manager_1.4.3_all.deb
 make VERSION=1.4.1      # another version
 make clean
 dpkg -i dist/wwan-manager_*.deb

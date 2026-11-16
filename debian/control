@@ -19,6 +19,7 @@ Description: on-demand LTE data connection for a Sierra Wireless EM7455 / Dell D
  /run/wwan/<iface>.dns.
  .
  wwan-sim shows or switches the active SIM on dual-SIM carrier boards,
- wwan-pin shows the SIM PIN state or switches the SIM's PIN lock off,
+ wwan-pin shows the SIM PIN state, switches the SIM's PIN lock off or on
+ or changes the PIN,
  wwan-apn shows or sets the APN (stored in the modem's PDP context).
  Settings are in /etc/default/wwan-manager.
